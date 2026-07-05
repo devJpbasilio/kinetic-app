@@ -1,0 +1,6 @@
+{
+  "name": "Kinetic",
+  "description": "Aplicativo de treinos premium com design moderno, bento grid, e tradutor inteligente de exercícios integrado à API do Gemini.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

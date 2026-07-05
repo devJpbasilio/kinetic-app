@@ -1,0 +1,252 @@
+import React, { useState } from 'react';
+import { Workout, UserProfile } from '../types';
+import { Play, Dumbbell, Flame, TrendingDown, Scale, Percent, Zap, ChevronRight, RefreshCw } from 'lucide-react';
+import { motion } from 'motion/react';
+
+interface DashboardViewProps {
+  user: UserProfile;
+  workouts: Workout[];
+  onStartWorkout: (workout: Workout) => void;
+  onNavigate: (tab: string) => void;
+  onLogWeight: (weight: number) => void;
+}
+
+export default function DashboardView({ user, workouts, onStartWorkout, onNavigate, onLogWeight }: DashboardViewProps) {
+  const [weightInput, setWeightInput] = useState('');
+  const [showWeightModal, setShowWeightModal] = useState(false);
+
+  const defaultWorkout = workouts[0] || null;
+
+  const handleWeightSubmit = (e: React.FormEvent) => {
+    e.preventDefault();
+    const w = parseFloat(weightInput);
+    if (!isNaN(w) && w > 0) {
+      onLogWeight(w);
+      setShowWeightModal(false);
+      setWeightInput('');
+    }
+  };
+
+  return (
+    <motion.div 
+      initial={{ opacity: 0, y: 15 }}
+      animate={{ opacity: 1, y: 0 }}
+      exit={{ opacity: 0, y: -15 }}
+      transition={{ duration: 0.4 }}
+      className="space-y-lg"
+    >
+      {/* Header Greeting */}
+      <section className="space-y-xs">
+        <h1 className="text-headline-lg-mobile md:text-headline-lg font-extrabold tracking-tight text-white">
+          Olá, {user.name}!
+        </h1>
+        <p className="text-body-md text-on-surface-variant font-medium">
+          Pronto para o treino de hoje? Sua consistência é inspiradora.
+        </p>
+      </section>
+
+      {/* Main CTA Card */}
+      {defaultWorkout ? (
+        <section 
+          onClick={() => onStartWorkout(defaultWorkout)}
+          className="relative group cursor-pointer active:scale-[0.99] transition-all duration-300 rounded-2xl overflow-hidden glass-card h-64 flex flex-col justify-end p-md border border-white/10 hover:border-primary-container/30"
+        >
+          <div className="absolute inset-0 z-0">
+            <img 
+              className="w-full h-full object-cover opacity-60 group-hover:scale-105 transition-transform duration-700" 
+              src="https://lh3.googleusercontent.com/aida-public/AB6AXuDntYyXB4p64wx1TkHVOkNentyYVWOLhZm0WfzAQ_RWA3YGyPv8UidqRyXvBTcwWE8vpFvi-3wT5zY140Vlr2nOyHnS1b0CO5Ke4P2dhPaRcB6ddg3CBzlk-rHNRt7SZxMQBS26xDOL8rk4YWXQvqE5dwbIneG6kYZAeBGXDtXYzZtK4h4UFpT7TJrymRRrbhj50iHldVPXzEdsBvxQusaYKeDChVHuCVJ5vSnxLWb-x7VvppfBn5bxa7JDNnX0b33wBSVTG3j7BkF-"
+              alt="Atleta levantando peso"
+              referrerPolicy="no-referrer"
+            />
+            <div className="absolute inset-0 bg-gradient-to-t from-[#0A0B0D] via-[#0A0B0D]/50 to-transparent"></div>
+          </div>
+          <div className="relative z-10 space-y-sm">
+            <div className="flex items-center gap-xs">
+              <span className="w-1.5 h-4 bg-primary-container rounded-full"></span>
+              <span className="text-label-md text-primary-container tracking-widest uppercase font-bold">
+                {defaultWorkout.name}
+              </span>
+            </div>
+            <div className="flex justify-between items-end">
+              <div>
+                <h2 className="text-headline-md font-extrabold text-white uppercase tracking-tight">Começar Treino Diário</h2>
+                <p className="text-body-md text-on-surface-variant font-medium">45 min • Alta Intensidade</p>
+              </div>
+              <button className="w-12 h-12 bg-primary-container text-on-primary rounded-full flex items-center justify-center hover:scale-110 transition-transform shadow-[0_0_15px_rgba(202,243,0,0.5)]">
+                <Play className="w-6 h-6 fill-on-primary text-on-primary" />
+              </button>
+            </div>
+          </div>
+        </section>
+      ) : (
+        <section 
+          onClick={() => onNavigate('treino')}
+          className="glass-panel p-lg rounded-2xl flex flex-col items-center justify-center text-center border-dashed border-white/10 space-y-md cursor-pointer"
+        >
+          <Dumbbell className="w-10 h-10 text-primary-container" />
+          <div>
+            <h3 className="text-body-lg font-bold text-white">Nenhum treino planejado</h3>
+            <p className="text-body-md text-on-surface-variant">Crie um treino personalizado no planejador para começar.</p>
+          </div>
+          <button className="bg-primary-container text-on-primary px-4 py-2 rounded-lg text-label-md font-bold uppercase tracking-wider">
+            Criar Treino
+          </button>
+        </section>
+      )}
+
+      {/* Progress Tracking */}
+      <section className="space-y-md">
+        <div className="flex justify-between items-end">
+          <h3 className="text-headline-md font-bold text-white tracking-tight">Progresso Semanal</h3>
+          <span className="text-label-md text-on-surface-variant font-bold">
+            {user.streak} de 7 treinos concluídos
+          </span>
+        </div>
+        <div className="h-4 bg-[#0F1115] rounded-full overflow-hidden flex gap-xs p-1 border border-white/5">
+          {Array.from({ length: 7 }).map((_, idx) => (
+            <div 
+              key={idx} 
+              className={`h-full rounded-full transition-colors duration-500 ${
+                idx < user.streak 
+                  ? 'bg-primary-container shadow-[0_0_8px_rgba(204,255,0,0.5)]' 
+                  : 'bg-[#0A0B0D]'
+              }`}
+              style={{ width: `${100 / 7}%` }}
+            />
+          ))}
+        </div>
+      </section>
+
+      {/* Stats Bento Grid */}
+      <section className="space-y-md">
+        <h3 className="text-headline-md font-bold text-white tracking-tight">Estatísticas Atuais</h3>
+        <div className="grid grid-cols-2 md:grid-cols-3 gap-gutter">
+          {/* Weight Card */}
+          <div 
+            onClick={() => setShowWeightModal(true)}
+            className="glass-card p-md rounded-3xl space-y-md hover:border-primary-container/30 transition-all duration-300 cursor-pointer relative group overflow-hidden"
+          >
+            <div className="flex justify-between items-start">
+              <span className="text-label-md text-on-surface-variant font-bold uppercase tracking-wider">Peso</span>
+              <Scale className="w-5 h-5 text-primary-container" />
+            </div>
+            <div className="space-y-xs">
+              <p className="text-data-lg font-black tracking-tight text-white">
+                {user.weight.toFixed(1)}
+                <span className="text-label-md text-on-surface-variant ml-xs">kg</span>
+              </p>
+              <p className="text-[12px] text-primary-container font-semibold flex items-center">
+                <TrendingDown className="w-3.5 h-3.5 mr-1" />
+                0.4 kg vs semana passada
+              </p>
+            </div>
+            <div className="absolute right-2 bottom-2 opacity-0 group-hover:opacity-100 transition-opacity text-[10px] text-primary-container font-bold uppercase">
+              Registrar +
+            </div>
+          </div>
+
+          {/* Body Fat Card */}
+          <div className="glass-card p-md rounded-3xl space-y-md hover:border-primary-container/30 transition-all duration-300">
+            <div className="flex justify-between items-start">
+              <span className="text-label-md text-on-surface-variant font-bold uppercase tracking-wider">Gordura Corporal</span>
+              <Percent className="w-5 h-5 text-secondary-container" />
+            </div>
+            <div className="space-y-xs">
+              <p className="text-data-lg font-black tracking-tight text-white">
+                {user.body_fat}
+                <span className="text-label-md text-on-surface-variant ml-xs">%</span>
+              </p>
+              <p className="text-[12px] text-on-surface-variant font-semibold">
+                Sequência estável • 12 dias
+              </p>
+            </div>
+          </div>
+
+          {/* Active Minutes */}
+          <div className="glass-card p-md rounded-3xl space-y-md col-span-2 md:col-span-1 hover:border-primary-container/30 transition-all duration-300 relative overflow-hidden">
+            <div className="flex justify-between items-start relative z-10">
+              <span className="text-label-md text-on-surface-variant font-bold uppercase tracking-wider">Minutos Ativos</span>
+              <Zap className="w-5 h-5 text-primary-container fill-primary-container" />
+            </div>
+            <div className="space-y-xs relative z-10">
+              <p className="text-data-lg font-black tracking-tight text-white">
+                {user.active_minutes}
+                <span className="text-label-md text-on-surface-variant ml-xs">min</span>
+              </p>
+              <p className="text-[12px] text-primary-container font-semibold">
+                Meta: 600 min/semana
+              </p>
+            </div>
+            {/* Small Sparkline visualization */}
+            <div className="absolute bottom-0 left-0 w-full h-12 opacity-25 pointer-events-none">
+              <svg className="w-full h-full" preserveAspectRatio="none" viewBox="0 0 100 40">
+                <path 
+                  d="M0 40 L10 30 L20 35 L30 15 L40 25 L50 10 L60 20 L70 5 L80 15 L90 10 L100 20 V40 H0 Z" 
+                  fill="#caf300"
+                ></path>
+              </svg>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      {/* Navigation Shortcut Panel */}
+      <section 
+        onClick={() => onNavigate('historico')}
+        className="glass-card rounded-3xl p-md flex items-center justify-between border-dashed border-white/20 hover:bg-white/5 transition-all duration-300 cursor-pointer"
+      >
+        <div className="flex items-center gap-md">
+          <div className="w-12 h-12 rounded-xl bg-[#0F1115] border border-white/10 flex items-center justify-center text-primary-container">
+            <Flame className="w-6 h-6" />
+          </div>
+          <div>
+            <h4 className="text-body-lg font-bold text-white">Ver Histórico Detalhado</h4>
+            <p className="text-label-md text-on-surface-variant font-medium">Analise suas tendências de força e queima calórica</p>
+          </div>
+        </div>
+        <ChevronRight className="w-5 h-5 text-on-surface-variant" />
+      </section>
+
+      {/* Weight Input Dialog Modal */}
+      {showWeightModal && (
+        <div className="fixed inset-0 z-50 flex items-center justify-center p-4 bg-black/70 backdrop-blur-sm">
+          <motion.div 
+            initial={{ scale: 0.9, opacity: 0 }}
+            animate={{ scale: 1, opacity: 1 }}
+            className="glass-panel w-full max-w-sm rounded-2xl p-md border border-white/10 text-center space-y-md"
+          >
+            <h3 className="text-headline-md font-extrabold text-white">Registrar Peso Atual</h3>
+            <p className="text-body-md text-on-surface-variant">Acompanhe seu progresso de massa corporal com precisão.</p>
+            <form onSubmit={handleWeightSubmit} className="space-y-md">
+              <input 
+                type="number" 
+                step="0.1" 
+                required
+                value={weightInput}
+                onChange={(e) => setWeightInput(e.target.value)}
+                placeholder="Ex: 78.5"
+                className="w-full bg-[#0F1115] border border-white/10 focus:border-primary-container rounded-xl py-3 text-center text-white font-bold text-lg focus:outline-none"
+                autoFocus
+              />
+              <div className="flex gap-sm">
+                <button 
+                  type="button" 
+                  onClick={() => setShowWeightModal(false)}
+                  className="flex-1 py-2.5 border border-white/10 hover:bg-white/5 text-white font-bold rounded-xl"
+                >
+                  Cancelar
+                </button>
+                <button 
+                  type="submit"
+                  className="flex-1 py-2.5 bg-primary-container text-on-primary font-bold rounded-xl hover:brightness-110 shadow-lg shadow-primary-container/20"
+                >
+                  Salvar
+                </button>
+              </div>
+            </form>
+          </motion.div>
+        </div>
+      )}
+    </motion.div>
+  );
+}
