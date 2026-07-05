@@ -16,30 +16,27 @@ export default function HistoryView({ logs, user }: HistoryViewProps) {
   };
 
   // Format historical date indicators beautifully
-  const getDayDetails = (dateStr: string) => {
-    if (dateStr.toLowerCase().includes("ontem")) {
-      return { label: "Ontem", number: "14" };
+  const getDayDetails = (log: WorkoutLog) => {
+    const days = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
+
+    // log.date em formato "YYYY-MM-DD": parse como data local para não deslocar o dia
+    let d = new Date(`${log.date}T00:00:00`);
+    if (isNaN(d.getTime())) {
+      // registros antigos podem ter texto livre ("Ontem") — usa o timestamp de criação
+      d = new Date(log.created_at);
     }
-    if (dateStr.toLowerCase().includes("segunda")) {
-      return { label: "Segunda", number: "12" };
-    }
-    if (dateStr.toLowerCase().includes("sáb") || dateStr.toLowerCase().includes("sabado")) {
-      return { label: "Sáb", number: "10" };
+    if (isNaN(d.getTime())) {
+      return { label: "Dia", number: "—" };
     }
 
-    // fallback for regular dates
-    try {
-      const d = new Date(dateStr);
-      if (!isNaN(d.getTime())) {
-        const days = ["Dom", "Seg", "Ter", "Qua", "Qui", "Sex", "Sáb"];
-        return {
-          label: days[d.getDay()],
-          number: d.getDate().toString()
-        };
-      }
-    } catch (e) {}
+    const today = new Date();
+    const isToday = d.toDateString() === today.toDateString();
+    const isYesterday = d.toDateString() === new Date(today.getTime() - 24 * 60 * 60 * 1000).toDateString();
 
-    return { label: "Dia", number: "07" };
+    return {
+      label: isToday ? "Hoje" : isYesterday ? "Ontem" : days[d.getDay()],
+      number: d.getDate().toString()
+    };
   };
 
   return (
@@ -161,7 +158,7 @@ export default function HistoryView({ logs, user }: HistoryViewProps) {
               </div>
             ) : (
               logs.map((log) => {
-                const day = getDayDetails(log.date);
+                const day = getDayDetails(log);
                 const isExpanded = expandedLogId === log.id;
 
                 // Border colors matching Stitch

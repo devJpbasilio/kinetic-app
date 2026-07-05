@@ -78,7 +78,7 @@ export default function App() {
       const res = await fetch('/api/user', {
         method: 'PUT',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ weight, streak: Math.min(7, user.streak + 1) }),
+        body: JSON.stringify({ weight }),
       });
       if (res.ok) {
         const updated = await res.json();

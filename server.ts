@@ -25,7 +25,7 @@ if (process.env.GEMINI_API_KEY) {
 
 async function startServer() {
   const app = express();
-  const PORT = 3000;
+  const PORT = Number(process.env.PORT) || 3000;
 
   // Use JSON body parser
   app.use(express.json());
@@ -122,7 +122,7 @@ Texto a analisar:
 ${rawText}`;
 
         const response = await ai.models.generateContent({
-          model: "gemini-3.5-flash",
+          model: "gemini-2.5-flash",
           contents: prompt,
           config: {
             systemInstruction: "Você é um treinador de fisiculturismo sênior, fisiologista e tradutor profissional de educação física no Brasil. Traduza termos técnicos para a linguagem usual brasileira de academia com excelente detalhamento de segurança.",
@@ -184,9 +184,12 @@ ${rawText}`;
         });
       }
 
-      // Save to database
+      // Save to database (descarta itens sem os campos mínimos vindos da IA)
       const imported: any[] = [];
-      for (const ex of translatedExercises) {
+      const validExercises = translatedExercises.filter(
+        (ex) => ex && typeof ex.name_pt === 'string' && ex.name_pt.trim() && typeof ex.muscle_group === 'string'
+      );
+      for (const ex of validExercises) {
         const newEx = db.addExercise({
           name_pt: ex.name_pt,
           name_en: ex.name_en,
@@ -336,7 +339,7 @@ ${rawText}`;
         user_id: "user-alex",
         workout_id: workout_id || "custom",
         workout_name,
-        date: date || "Hoje",
+        date: date || new Date().toISOString().slice(0, 10),
         duration: Number(duration),
         calories: Number(calories) || Math.round(Number(duration) * 7.5), // estimate calories if not provided
         notes: notes || ""

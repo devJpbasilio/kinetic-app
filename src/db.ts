@@ -1,57 +1,15 @@
 import fs from 'fs';
 import path from 'path';
+import { Exercise, Workout, WorkoutExercise, WorkoutLog, UserProfile } from './types';
 
-export interface Exercise {
-  id: string;
-  name_pt: string;
-  name_en: string;
-  muscle_group: string;
-  description_pt: string;
-  description_en: string;
-  created_at: string;
-}
-
-export interface Workout {
-  id: string;
-  name: string;
-  user_id: string;
-  created_at: string;
-}
-
-export interface WorkoutExercise {
-  id: string;
-  workout_id: string;
-  exercise_id: string;
-  series: number;
-  repetitions: string; // e.g. "10-12" or "8"
-  rest_time: string; // e.g. "01:45"
-  weight: number; // in kg
-}
-
-export interface WorkoutLog {
-  id: string;
-  user_id: string;
-  workout_id: string;
-  workout_name: string;
-  date: string; // e.g., "2026-07-04"
-  duration: number; // in minutes
-  calories: number;
-  notes: string;
-  created_at: string;
-}
+export type { Exercise, Workout, WorkoutExercise, WorkoutLog };
 
 export interface DatabaseState {
   exercises: Exercise[];
   workouts: Workout[];
   workout_exercises: WorkoutExercise[];
   workout_logs: WorkoutLog[];
-  user: {
-    name: string;
-    weight: number;
-    body_fat: number;
-    active_minutes: number;
-    streak: number;
-  };
+  user: UserProfile;
 }
 
 const DB_FILE = path.join(process.cwd(), 'db.json');
@@ -205,7 +163,7 @@ const initialLogs: WorkoutLog[] = [
     user_id: "user-alex",
     workout_id: "w-push",
     workout_name: "Treino de Empurrar",
-    date: "Ontem", // Displaying yesterday, e.g. for matching UI
+    date: new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
     duration: 45,
     calories: 320,
     notes: "Senti uma excelente conexão mente-músculo no supino reto. Consegui progredir 2kg na última série.",
@@ -216,7 +174,7 @@ const initialLogs: WorkoutLog[] = [
     user_id: "user-alex",
     workout_id: "w-pull",
     workout_name: "Treino de Puxar",
-    date: "Segunda-feira",
+    date: new Date(Date.now() - 3 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
     duration: 50,
     calories: 410,
     notes: "Levantamento terra bem pesado, core muito firme. Bíceps bem fadigados no final.",
@@ -227,7 +185,7 @@ const initialLogs: WorkoutLog[] = [
     user_id: "user-alex",
     workout_id: "w-legs",
     workout_name: "Treino de Pernas",
-    date: "Sáb",
+    date: new Date(Date.now() - 5 * 24 * 60 * 60 * 1000).toISOString().slice(0, 10),
     duration: 60,
     calories: 580,
     notes: "Agachamento profundo com boa amplitude. Próxima semana tentar subir carga.",
@@ -400,7 +358,7 @@ export class Database {
 
     // Dynamically update user stats to match progress
     this.state.user.active_minutes += log.duration;
-    // Keep active minutes updated
+    this.state.user.streak = Math.min(7, this.state.user.streak + 1);
     this.save();
     return newLog;
   }
