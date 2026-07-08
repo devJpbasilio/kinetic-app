@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Workout, WorkoutExercise, Exercise } from '../types';
-import { X, Play, Pause, Timer, History, Check, ShieldAlert, Dumbbell, Clock, Flame, Sparkles } from 'lucide-react';
+import { X, Play, Pause, Timer, History, Check, ShieldAlert, Dumbbell, Clock, Flame, Sparkles, PlayCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface ActiveWorkoutViewProps {
@@ -168,8 +168,8 @@ export default function ActiveWorkoutView({
       transition={{ duration: 0.4 }}
       className="space-y-md pb-12"
     >
-      {/* Top Header */}
-      <header className="fixed top-0 left-0 w-full z-50 bg-[#131313]/90 backdrop-blur-xl border-b border-white/10 flex justify-between items-center px-margin-mobile h-16">
+      {/* Top Header (com safe-area para notch/status bar) */}
+      <header className="fixed top-0 left-0 w-full z-50 bg-[#131313]/90 backdrop-blur-xl border-b border-white/10 flex justify-between items-center px-margin-mobile h-[calc(4rem+env(safe-area-inset-top))] pt-[env(safe-area-inset-top)]">
         <div className="flex items-center gap-3">
           <span className="material-symbols-outlined text-primary-container text-2xl animate-pulse">bolt</span>
           <h1 className="text-headline-md font-extrabold tracking-tight text-white uppercase">
@@ -186,7 +186,7 @@ export default function ActiveWorkoutView({
       </header>
 
       {/* Spacer for fixed header */}
-      <div className="pt-16" />
+      <div className="pt-[calc(4rem+env(safe-area-inset-top))]" />
 
       {/* Progress Indicator */}
       <div className="space-y-xs pt-xs">
@@ -235,6 +235,39 @@ export default function ActiveWorkoutView({
             </div>
           </div>
         </div>
+
+        {/* Demonstração do exercício (imagem + vídeo) */}
+        {(activeEx.image_demo || activeEx.video_url) && (
+          <div className="flex items-center gap-md pl-xs">
+            {activeEx.image_demo ? (
+              <img
+                src={activeEx.image_demo}
+                alt={`Demonstração: ${activeEx.name_pt}`}
+                loading="lazy"
+                className="w-20 h-20 rounded-xl object-cover border border-white/10 shrink-0"
+              />
+            ) : (
+              <div className="w-20 h-20 rounded-xl bg-[#0F1115] border border-white/10 flex items-center justify-center shrink-0">
+                <PlayCircle className="w-8 h-8 text-primary-container" />
+              </div>
+            )}
+            <div className="flex-1 min-w-0 space-y-1.5">
+              <p className="text-xs text-on-surface-variant font-medium">
+                Não sabe como executar? Confira a demonstração.
+              </p>
+              {activeEx.video_url && (
+                <a
+                  href={activeEx.video_url}
+                  target="_blank"
+                  rel="noopener noreferrer"
+                  className="inline-flex items-center gap-1.5 text-sm font-bold text-primary-container hover:underline"
+                >
+                  <PlayCircle className="w-4 h-4" /> Ver vídeo de execução
+                </a>
+              )}
+            </div>
+          </div>
+        )}
 
         {/* Target Metrics Display */}
         <div className="grid grid-cols-2 gap-gutter pl-xs">
@@ -380,7 +413,7 @@ export default function ActiveWorkoutView({
           <motion.div
             initial={{ scale: 0.9, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="glass-panel w-full max-w-md rounded-2xl p-md md:p-lg border border-primary-container/20 space-y-md text-center my-auto"
+            className="glass-panel w-full max-w-[28rem] rounded-2xl p-md md:p-lg border border-primary-container/20 space-y-md text-center my-auto"
           >
             <div className="flex flex-col items-center gap-xs">
               <div className="w-16 h-16 rounded-full bg-primary-container/10 border border-primary-container/20 flex items-center justify-center text-primary-container mb-xs animate-bounce">

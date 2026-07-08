@@ -1,0 +1,28 @@
+# Kinetic — configuração do Fly.io
+# Troque "kinetic-SEUNOME" por um nome único (nomes no Fly são globais).
+app = "kinetic-SEUNOME"
+primary_region = "gru"  # São Paulo — mais perto do Brasil
+
+[build]
+
+[env]
+  NODE_ENV = "production"
+  PORT = "3000"
+  # Banco no disco persistente (volume montado abaixo)
+  DB_PATH = "/data/kinetic.db"
+
+# Disco persistente onde o kinetic.db é guardado (sobrevive a deploys)
+[mounts]
+  source = "kinetic_data"
+  destination = "/data"
+
+[http_service]
+  internal_port = 3000
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "256mb"

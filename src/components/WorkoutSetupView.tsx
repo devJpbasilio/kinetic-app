@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Workout, WorkoutExercise, Exercise } from '../types';
-import { Plus, Trash2, Edit2, Check, X, Dumbbell, Clock, Hash, ChevronRight, ArrowLeft, RefreshCw } from 'lucide-react';
+import { Plus, Trash2, Edit2, Check, X, Dumbbell, Clock, Hash, ChevronRight, ArrowLeft, RefreshCw, Search, Download, PlayCircle } from 'lucide-react';
 import { motion } from 'motion/react';
 
 interface WorkoutSetupViewProps {
@@ -19,6 +19,21 @@ interface WorkoutSetupViewProps {
   }) => void;
   onUpdateWorkoutExercise: (id: string, payload: Partial<WorkoutExercise>) => void;
   onDeleteWorkoutExercise: (id: string) => void;
+  onImportFromCatalog: (id: string | number) => Promise<Exercise | null>;
+}
+
+// Item do catálogo externo (campos usados na busca)
+interface CatalogItem {
+  id: number | string;
+  name_pt?: string;
+  name_en?: string;
+  target_muscle_group_pt?: string;
+  primary_equipment_pt?: string;
+  difficulty_pt?: string;
+  image_muscle?: string;
+  image_equipment?: string;
+  image_demo?: string | null;
+  video_demo_url?: string | null;
 }
 
 export default function WorkoutSetupView({
@@ -31,6 +46,7 @@ export default function WorkoutSetupView({
   onAddExerciseToWorkout,
   onUpdateWorkoutExercise,
   onDeleteWorkoutExercise,
+  onImportFromCatalog,
 }: WorkoutSetupViewProps) {
   const [selectedWorkout, setSelectedWorkout] = useState<Workout | null>(null);
   const [newWorkoutName, setNewWorkoutName] = useState('');
@@ -44,6 +60,46 @@ export default function WorkoutSetupView({
   const [newReps, setNewReps] = useState('10 — 12');
   const [newRest, setNewRest] = useState('01:45');
   const [newWeight, setNewWeight] = useState(40);
+
+  // Busca no catálogo externo de exercícios
+  const [showCatalog, setShowCatalog] = useState(false);
+  const [catalogQuery, setCatalogQuery] = useState('');
+  const [catalogResults, setCatalogResults] = useState<CatalogItem[]>([]);
+  const [catalogLoading, setCatalogLoading] = useState(false);
+  const [catalogError, setCatalogError] = useState<string | null>(null);
+  const [importingId, setImportingId] = useState<string | number | null>(null);
+
+  const searchCatalog = async () => {
+    const q = catalogQuery.trim();
+    setCatalogLoading(true);
+    setCatalogError(null);
+    try {
+      const params = new URLSearchParams({ limit: '12' });
+      if (q) params.set('search', q);
+      const res = await fetch(`/api/catalog/exercises?${params.toString()}`);
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || 'Falha na busca.');
+      const list = Array.isArray(data?.data) ? data.data : (Array.isArray(data) ? data : []);
+      setCatalogResults(list);
+    } catch (err: any) {
+      setCatalogError(err.message || 'Erro ao buscar no catálogo.');
+      setCatalogResults([]);
+    } finally {
+      setCatalogLoading(false);
+    }
+  };
+
+  const handleImport = async (item: CatalogItem) => {
+    setImportingId(item.id);
+    const imported = await onImportFromCatalog(item.id);
+    setImportingId(null);
+    if (imported) {
+      setNewExerciseId(imported.id);
+      setShowCatalog(false);
+      setCatalogResults([]);
+      setCatalogQuery('');
+    }
+  };
 
   const handleCreateWorkout = (e: React.FormEvent) => {
     e.preventDefault();
@@ -251,6 +307,82 @@ export default function WorkoutSetupView({
                 onSubmit={handleAddExerciseSubmit}
                 className="glass-panel p-md rounded-3xl border border-primary-container/20 space-y-md"
               >
+                {/* Busca no catálogo externo (3.242 exercícios) */}
+                <div className="space-y-sm">
+                  <button
+                    type="button"
+                    onClick={() => setShowCatalog((v) => !v)}
+                    className="w-full flex items-center justify-center gap-2 text-xs font-bold uppercase tracking-wider py-2.5 rounded-xl border border-primary-container/30 text-primary-container hover:bg-primary-container/10 transition-colors"
+                  >
+                    <Search className="w-4 h-4" />
+                    {showCatalog ? 'Fechar busca do catálogo' : 'Buscar no catálogo (3.242 exercícios)'}
+                  </button>
+
+                  {showCatalog && (
+                    <div className="space-y-sm bg-[#0A0B0D] border border-white/10 rounded-2xl p-md">
+                      <div className="flex gap-sm">
+                        <input
+                          type="text"
+                          value={catalogQuery}
+                          onChange={(e) => setCatalogQuery(e.target.value)}
+                          onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); searchCatalog(); } }}
+                          placeholder="Nome, músculo ou equipamento..."
+                          className="flex-grow bg-[#0F1115] border border-white/10 focus:border-primary-container rounded-xl px-4 py-2.5 text-white text-sm font-medium focus:outline-none transition-colors placeholder:text-on-surface-variant/40"
+                        />
+                        <button
+                          type="button"
+                          onClick={() => searchCatalog()}
+                          disabled={catalogLoading}
+                          className="bg-primary-container text-on-primary px-4 rounded-xl flex items-center justify-center hover:brightness-110 active:scale-95 transition-all disabled:opacity-60"
+                        >
+                          {catalogLoading ? <RefreshCw className="w-4 h-4 animate-spin" /> : <Search className="w-4 h-4 stroke-[2.5px]" />}
+                        </button>
+                      </div>
+
+                      {catalogError && (
+                        <p className="text-xs text-red-400 font-semibold flex items-center gap-1.5">
+                          <X className="w-3.5 h-3.5 shrink-0" /> {catalogError}
+                        </p>
+                      )}
+
+                      <div className="space-y-xs max-h-72 overflow-y-auto no-scrollbar">
+                        {catalogResults.map((item) => (
+                          <div
+                            key={item.id}
+                            className="flex items-center justify-between gap-2 bg-[#0F1115] border border-white/10 rounded-xl px-3 py-2"
+                          >
+                            <div className="flex items-center gap-2.5 min-w-0">
+                              {(item.image_demo || item.image_muscle) && (
+                                <img
+                                  src={item.image_demo || item.image_muscle}
+                                  alt=""
+                                  loading="lazy"
+                                  className={`w-11 h-11 shrink-0 rounded-lg bg-white/5 ${item.image_demo ? 'object-cover' : 'p-1'}`}
+                                />
+                              )}
+                              <div className="min-w-0">
+                                <p className="text-sm font-semibold text-white truncate">{item.name_pt || item.name_en}</p>
+                                <p className="text-[11px] text-on-surface-variant truncate">
+                                  {[item.target_muscle_group_pt, item.primary_equipment_pt, item.difficulty_pt].filter(Boolean).join(' · ')}
+                                </p>
+                              </div>
+                            </div>
+                            <button
+                              type="button"
+                              onClick={() => handleImport(item)}
+                              disabled={importingId === item.id}
+                              className="shrink-0 flex items-center gap-1 text-[11px] font-bold uppercase tracking-wider bg-primary-container/15 text-primary-container px-2.5 py-1.5 rounded-lg hover:bg-primary-container/25 transition-colors disabled:opacity-60"
+                            >
+                              {importingId === item.id ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Download className="w-3.5 h-3.5" />}
+                              Usar
+                            </button>
+                          </div>
+                        ))}
+                      </div>
+                    </div>
+                  )}
+                </div>
+
                 <div className="grid grid-cols-1 md:grid-cols-2 gap-md">
                   {/* Select exercise */}
                   <div className="space-y-xs">
@@ -361,13 +493,33 @@ export default function WorkoutSetupView({
                       key={we.id}
                       className="glass-card rounded-3xl p-md flex flex-col md:flex-row md:items-center justify-between border-l-4 border-l-primary-container border-y border-r border-white/5 space-y-md md:space-y-0"
                     >
-                      <div className="space-y-xs">
-                        <h4 className="text-body-lg font-bold text-white">
-                          {exerciseDetails.name_pt}
-                        </h4>
-                        <p className="text-xs text-on-surface-variant font-semibold uppercase tracking-wider">
-                          Grupo: {exerciseDetails.muscle_group}
-                        </p>
+                      <div className="flex items-center gap-md">
+                        {(exerciseDetails.image_demo || exerciseDetails.image_muscle) && (
+                          <img
+                            src={exerciseDetails.image_demo || exerciseDetails.image_muscle}
+                            alt=""
+                            loading="lazy"
+                            className={`w-12 h-12 shrink-0 rounded-xl bg-white/5 border border-white/10 ${exerciseDetails.image_demo ? 'object-cover' : 'p-1.5'}`}
+                          />
+                        )}
+                        <div className="space-y-xs">
+                          <h4 className="text-body-lg font-bold text-white">
+                            {exerciseDetails.name_pt}
+                          </h4>
+                          <p className="text-xs text-on-surface-variant font-semibold uppercase tracking-wider">
+                            Grupo: {exerciseDetails.muscle_group}
+                          </p>
+                          {exerciseDetails.video_url && (
+                            <a
+                              href={exerciseDetails.video_url}
+                              target="_blank"
+                              rel="noopener noreferrer"
+                              className="inline-flex items-center gap-1 text-[11px] font-bold text-primary-container hover:underline"
+                            >
+                              <PlayCircle className="w-3.5 h-3.5" /> Ver vídeo
+                            </a>
+                          )}
+                        </div>
                       </div>
 
                       {/* Display / edit metrics inside card inline */}

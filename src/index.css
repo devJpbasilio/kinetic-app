@@ -5,9 +5,60 @@
 @theme {
   --font-sans: "Inter", ui-sans-serif, system-ui, sans-serif;
   --font-mono: "JetBrains Mono", ui-monospace, SFMono-Regular, monospace;
+
+  /* ---- Cores do Design System ---- */
   --color-primary-container: #CCFF00;
   --color-on-primary: #0A0B0D;
+  --color-on-surface: #f1f5f9;
   --color-on-surface-variant: #94a3b8;
+  --color-secondary-container: #A78BFA;
+  --color-outline: #64748b;
+
+  /* ---- Espaçamentos semânticos ----
+     Estas chaves geram p-md, gap-gutter, space-y-lg, px-margin-mobile etc.
+     Antes elas não existiam, então TODO o espaçamento colapsava.
+
+     ⚠️ ATENÇÃO: os nomes xs/sm/md/lg/xl também são a escala de largura do
+     Tailwind. Por isso NÃO use max-w-sm, max-w-md, max-w-lg, max-w-xl aqui —
+     eles pegariam estes espaçamentos (ex.: max-w-sm = 12px) em vez da largura
+     de container. Para larguras use valores explícitos: max-w-[24rem], etc. */
+  --spacing-xs: 0.5rem;            /* 8px  */
+  --spacing-sm: 0.75rem;           /* 12px */
+  --spacing-md: 1.25rem;           /* 20px */
+  --spacing-lg: 2rem;              /* 32px */
+  --spacing-xl: 3rem;              /* 48px */
+  --spacing-gutter: 1rem;          /* 16px — espaçamento entre cards */
+  --spacing-margin-mobile: 1.25rem;/* 20px — margem lateral no mobile */
+
+  /* ---- Escala tipográfica fluida (adapta a qualquer tela) ---- */
+  --text-headline-lg: clamp(2rem, 5vw + 1rem, 2.75rem);
+  --text-headline-lg--line-height: 1.1;
+  --text-headline-lg--font-weight: 800;
+
+  --text-headline-lg-mobile: clamp(1.75rem, 6vw, 2.25rem);
+  --text-headline-lg-mobile--line-height: 1.15;
+
+  --text-headline-md: clamp(1.125rem, 1.5vw + 0.75rem, 1.375rem);
+  --text-headline-md--line-height: 1.25;
+
+  --text-body-lg: 1.0625rem;       /* 17px */
+  --text-body-lg--line-height: 1.5;
+
+  --text-body-md: 0.9375rem;       /* 15px */
+  --text-body-md--line-height: 1.55;
+
+  --text-label-md: 0.75rem;        /* 12px */
+  --text-label-md--line-height: 1.35;
+
+  --text-data-lg: clamp(1.625rem, 3vw + 0.75rem, 2.125rem);
+  --text-data-lg--line-height: 1.1;
+  --text-data-lg--font-weight: 900;
+}
+
+html {
+  /* Evita "pulos" de layout quando a barra do navegador mobile recolhe */
+  height: 100%;
+  -webkit-text-size-adjust: 100%;
 }
 
 body {
@@ -15,16 +66,71 @@ body {
   color: #f1f5f9;
   font-family: "Inter", sans-serif;
   -webkit-font-smoothing: antialiased;
+  min-height: 100dvh;
+  overscroll-behavior-y: none; /* sem "bounce" branco no iOS/Android */
+  touch-action: manipulation;  /* remove atraso de duplo-toque */
+}
+
+/* Em telas de toque, inputs com fonte < 16px fazem o iOS dar zoom ao focar.
+   Força 16px no mobile para uma experiência de app nativo. */
+@media (max-width: 767px) {
+  input, select, textarea {
+    font-size: 16px !important;
+  }
+}
+
+/* Área de toque confortável para botões pequenos em telas de toque */
+@media (pointer: coarse) {
+  button {
+    min-height: 32px;
+    min-width: 32px;
+  }
 }
 
 .inner-glow-primary {
   box-shadow: inset 0 0 12px rgba(204, 255, 0, 0.3);
 }
 
-.glass-panel, .glass-card {
-  background: rgba(255, 255, 255, 0.05);
-  backdrop-filter: blur(12px);
-  border: 1px solid rgba(255, 255, 255, 0.1);
+/* Superfícies do redesign: elevação real em vez de "glass" translúcido genérico */
+.glass-panel {
+  background: #121418;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 16px 40px -22px rgba(0, 0, 0, 0.8);
+}
+.glass-card {
+  background: #101216;
+  border: 1px solid rgba(255, 255, 255, 0.06);
+  transition: border-color 0.2s ease, background 0.2s ease;
+}
+.glass-card:hover {
+  background: #13161B;
+  border-color: rgba(255, 255, 255, 0.1);
+}
+
+/* ---- Redesign: superfícies com elevação real (menos "glass" genérico) ---- */
+.surface-card {
+  background: #111318;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+  box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.04), 0 16px 40px -20px rgba(0, 0, 0, 0.8);
+}
+.surface-raised {
+  background: #16191F;
+  border: 1px solid rgba(255, 255, 255, 0.08);
+}
+.surface-inset {
+  background: #0B0D11;
+  border: 1px solid rgba(255, 255, 255, 0.07);
+}
+/* Fundo do app com leve profundidade de marca (sem foto de banco de imagens) */
+.app-bg {
+  background:
+    radial-gradient(130% 90% at 50% -20%, rgba(204, 255, 0, 0.07), transparent 55%),
+    radial-gradient(100% 60% at 100% 100%, rgba(167, 139, 250, 0.05), transparent 60%),
+    #0A0B0D;
+}
+/* Realce sutil do acento (usar com parcimônia) */
+.accent-glow {
+  box-shadow: 0 0 0 1px rgba(204, 255, 0, 0.25), 0 8px 30px -8px rgba(204, 255, 0, 0.25);
 }
 
 .accent-border {
@@ -38,4 +144,3 @@ body {
   -ms-overflow-style: none;
   scrollbar-width: none;
 }
-

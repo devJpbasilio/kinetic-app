@@ -7,3 +7,6 @@ coverage/
 .env*
 !.env.example
 db.json
+kinetic.db
+kinetic.db-wal
+kinetic.db-shm

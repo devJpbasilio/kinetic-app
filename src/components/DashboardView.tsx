@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { Workout, UserProfile } from '../types';
-import { Play, Dumbbell, Flame, TrendingDown, Scale, Percent, Zap, ChevronRight, RefreshCw } from 'lucide-react';
+import { Play, Dumbbell, Flame, TrendingDown, Scale, Percent, Zap, ChevronRight, RefreshCw, Activity } from 'lucide-react';
 import { motion } from 'motion/react';
 
 interface DashboardViewProps {
@@ -16,6 +16,10 @@ export default function DashboardView({ user, workouts, onStartWorkout, onNaviga
   const [showWeightModal, setShowWeightModal] = useState(false);
 
   const defaultWorkout = workouts[0] || null;
+
+  const bmiLabel = (b: number) =>
+    b < 18.5 ? 'Abaixo do peso' : b < 25 ? 'Peso normal' : b < 30 ? 'Sobrepeso'
+    : b < 35 ? 'Obesidade I' : b < 40 ? 'Obesidade II' : 'Obesidade III';
 
   const handleWeightSubmit = (e: React.FormEvent) => {
     e.preventDefault();
@@ -47,33 +51,43 @@ export default function DashboardView({ user, workouts, onStartWorkout, onNaviga
 
       {/* Main CTA Card */}
       {defaultWorkout ? (
-        <section 
+        <section
           onClick={() => onStartWorkout(defaultWorkout)}
-          className="relative group cursor-pointer active:scale-[0.99] transition-all duration-300 rounded-2xl overflow-hidden glass-card h-64 flex flex-col justify-end p-md border border-white/10 hover:border-primary-container/30"
+          className="relative group cursor-pointer active:scale-[0.99] transition-all duration-300 rounded-3xl overflow-hidden h-56 flex flex-col justify-end p-md"
+          style={{
+            background:
+              'radial-gradient(130% 120% at 100% 0%, rgba(204,255,0,0.20), transparent 46%), linear-gradient(160deg, #16191F 0%, #0D0F13 100%)',
+            border: '1px solid rgba(255,255,255,0.08)',
+          }}
         >
-          <div className="absolute inset-0 z-0">
-            <img 
-              className="w-full h-full object-cover opacity-60 group-hover:scale-105 transition-transform duration-700" 
-              src="https://lh3.googleusercontent.com/aida-public/AB6AXuDntYyXB4p64wx1TkHVOkNentyYVWOLhZm0WfzAQ_RWA3YGyPv8UidqRyXvBTcwWE8vpFvi-3wT5zY140Vlr2nOyHnS1b0CO5Ke4P2dhPaRcB6ddg3CBzlk-rHNRt7SZxMQBS26xDOL8rk4YWXQvqE5dwbIneG6kYZAeBGXDtXYzZtK4h4UFpT7TJrymRRrbhj50iHldVPXzEdsBvxQusaYKeDChVHuCVJ5vSnxLWb-x7VvppfBn5bxa7JDNnX0b33wBSVTG3j7BkF-"
-              alt="Atleta levantando peso"
-              referrerPolicy="no-referrer"
-            />
-            <div className="absolute inset-0 bg-gradient-to-t from-[#0A0B0D] via-[#0A0B0D]/50 to-transparent"></div>
-          </div>
+          <span
+            className="material-symbols-outlined absolute -right-5 -top-3 text-primary-container/10 leading-none select-none pointer-events-none"
+            style={{ fontSize: '9rem' }}
+            aria-hidden="true"
+          >
+            bolt
+          </span>
           <div className="relative z-10 space-y-sm">
             <div className="flex items-center gap-xs">
-              <span className="w-1.5 h-4 bg-primary-container rounded-full"></span>
+              <span className="w-1.5 h-4 bg-primary-container rounded-full" />
               <span className="text-label-md text-primary-container tracking-widest uppercase font-bold">
                 {defaultWorkout.name}
               </span>
             </div>
             <div className="flex justify-between items-end">
               <div>
-                <h2 className="text-headline-md font-extrabold text-white uppercase tracking-tight">Começar Treino Diário</h2>
-                <p className="text-body-md text-on-surface-variant font-medium">45 min • Alta Intensidade</p>
+                <h2 className="text-headline-md font-extrabold text-white tracking-tight">Começar treino</h2>
+                <p className="text-body-md text-on-surface-variant font-medium">
+                  {user.streak > 0
+                    ? `Sequência de ${user.streak} ${user.streak === 1 ? 'dia' : 'dias'} — mantenha o ritmo`
+                    : 'Toque para começar agora'}
+                </p>
               </div>
-              <button className="w-12 h-12 bg-primary-container text-on-primary rounded-full flex items-center justify-center hover:scale-110 transition-transform shadow-[0_0_15px_rgba(202,243,0,0.5)]">
-                <Play className="w-6 h-6 fill-on-primary text-on-primary" />
+              <button
+                className="w-14 h-14 bg-primary-container text-on-primary rounded-full flex items-center justify-center hover:scale-110 transition-transform accent-glow shrink-0"
+                aria-label="Começar treino"
+              >
+                <Play className="w-6 h-6 fill-on-primary text-on-primary ml-0.5" />
               </button>
             </div>
           </div>
@@ -99,16 +113,16 @@ export default function DashboardView({ user, workouts, onStartWorkout, onNaviga
         <div className="flex justify-between items-end">
           <h3 className="text-headline-md font-bold text-white tracking-tight">Progresso Semanal</h3>
           <span className="text-label-md text-on-surface-variant font-bold">
-            {user.streak} de 7 treinos concluídos
+            {Math.min(7, user.weekly_workouts)} de 7 treinos esta semana
           </span>
         </div>
         <div className="h-4 bg-[#0F1115] rounded-full overflow-hidden flex gap-xs p-1 border border-white/5">
           {Array.from({ length: 7 }).map((_, idx) => (
-            <div 
-              key={idx} 
+            <div
+              key={idx}
               className={`h-full rounded-full transition-colors duration-500 ${
-                idx < user.streak 
-                  ? 'bg-primary-container shadow-[0_0_8px_rgba(204,255,0,0.5)]' 
+                idx < user.weekly_workouts
+                  ? 'bg-primary-container shadow-[0_0_8px_rgba(204,255,0,0.5)]'
                   : 'bg-[#0A0B0D]'
               }`}
               style={{ width: `${100 / 7}%` }}
@@ -135,9 +149,8 @@ export default function DashboardView({ user, workouts, onStartWorkout, onNaviga
                 {user.weight.toFixed(1)}
                 <span className="text-label-md text-on-surface-variant ml-xs">kg</span>
               </p>
-              <p className="text-[12px] text-primary-container font-semibold flex items-center">
-                <TrendingDown className="w-3.5 h-3.5 mr-1" />
-                0.4 kg vs semana passada
+              <p className="text-[12px] text-on-surface-variant font-semibold">
+                Toque para registrar
               </p>
             </div>
             <div className="absolute right-2 bottom-2 opacity-0 group-hover:opacity-100 transition-opacity text-[10px] text-primary-container font-bold uppercase">
@@ -157,8 +170,29 @@ export default function DashboardView({ user, workouts, onStartWorkout, onNaviga
                 <span className="text-label-md text-on-surface-variant ml-xs">%</span>
               </p>
               <p className="text-[12px] text-on-surface-variant font-semibold">
-                Sequência estável • 12 dias
+                Atualize no perfil
               </p>
+            </div>
+          </div>
+
+          {/* IMC Card */}
+          <div className="glass-card p-md rounded-3xl space-y-md hover:border-primary-container/30 transition-all duration-300">
+            <div className="flex justify-between items-start">
+              <span className="text-label-md text-on-surface-variant font-bold uppercase tracking-wider">IMC</span>
+              <Activity className="w-5 h-5 text-primary-container" />
+            </div>
+            <div className="space-y-xs">
+              {user.bmi && user.bmi > 0 ? (
+                <>
+                  <p className="text-data-lg font-black tracking-tight text-white">{user.bmi.toFixed(1)}</p>
+                  <p className="text-[12px] text-primary-container font-semibold">{bmiLabel(user.bmi)}</p>
+                </>
+              ) : (
+                <>
+                  <p className="text-data-lg font-black tracking-tight text-on-surface-variant/40">—</p>
+                  <p className="text-[12px] text-on-surface-variant font-semibold">Informe altura no perfil</p>
+                </>
+              )}
             </div>
           </div>
 
@@ -174,7 +208,7 @@ export default function DashboardView({ user, workouts, onStartWorkout, onNaviga
                 <span className="text-label-md text-on-surface-variant ml-xs">min</span>
               </p>
               <p className="text-[12px] text-primary-container font-semibold">
-                Meta: 600 min/semana
+                Esta semana
               </p>
             </div>
             {/* Small Sparkline visualization */}
@@ -213,7 +247,7 @@ export default function DashboardView({ user, workouts, onStartWorkout, onNaviga
           <motion.div 
             initial={{ scale: 0.9, opacity: 0 }}
             animate={{ scale: 1, opacity: 1 }}
-            className="glass-panel w-full max-w-sm rounded-2xl p-md border border-white/10 text-center space-y-md"
+            className="glass-panel w-full max-w-[24rem] rounded-2xl p-md border border-white/10 text-center space-y-md"
           >
             <h3 className="text-headline-md font-extrabold text-white">Registrar Peso Atual</h3>
             <p className="text-body-md text-on-surface-variant">Acompanhe seu progresso de massa corporal com precisão.</p>

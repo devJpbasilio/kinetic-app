@@ -238,7 +238,7 @@ export default function HistoryView({ logs, user }: HistoryViewProps) {
           <div className="absolute inset-0 flex items-center justify-between px-md">
             <div>
               <h3 className="text-headline-md font-black text-primary-container uppercase tracking-tight">Mantenha o Ritmo</h3>
-              <p className="text-body-md text-on-surface/80 max-w-sm mt-1 font-medium">
+              <p className="text-body-md text-on-surface/80 max-w-[24rem] mt-1 font-medium">
                 Você está em uma sequência de {user.streak} dias de treino. Mais um treino para estabelecer um novo recorde pessoal!
               </p>
             </div>
