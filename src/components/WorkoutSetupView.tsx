@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Workout, WorkoutExercise, Exercise } from '../types';
 import { Plus, Trash2, Edit2, Check, X, Dumbbell, Clock, Hash, ChevronRight, ArrowLeft, RefreshCw, Search, Download, PlayCircle } from 'lucide-react';
 import { motion } from 'motion/react';
@@ -35,6 +35,140 @@ interface CatalogItem {
   image_demo?: string | null;
   video_demo_url?: string | null;
 }
+
+// Linha de um exercício dentro do treino selecionado. Mantém os campos de texto
+// (reps/descanso/carga) em estado LOCAL e só persiste no servidor ao sair do campo
+// (onBlur) — antes cada tecla disparava um PUT (flood de rede + respostas fora de ordem).
+interface RowProps {
+  we: WorkoutExercise;
+  exercise: Exercise;
+  onUpdate: (id: string, payload: Partial<WorkoutExercise>) => void;
+  onDelete: (id: string) => void;
+}
+const WorkoutExerciseRow: React.FC<RowProps> = ({ we, exercise, onUpdate, onDelete }) => {
+  const [reps, setReps] = useState(we.repetitions);
+  const [rest, setRest] = useState(we.rest_time);
+  const [weight, setWeight] = useState(String(we.weight));
+
+  // Ressincroniza se o valor de fora mudar (ex.: +/- de séries recarrega o item)
+  useEffect(() => { setReps(we.repetitions); }, [we.repetitions]);
+  useEffect(() => { setRest(we.rest_time); }, [we.rest_time]);
+  useEffect(() => { setWeight(String(we.weight)); }, [we.weight]);
+
+  const commitReps = () => { const v = reps.trim(); if (v && v !== we.repetitions) onUpdate(we.id, { repetitions: v }); };
+  const commitRest = () => { const v = rest.trim(); if (v && v !== we.rest_time) onUpdate(we.id, { rest_time: v }); };
+  const commitWeight = () => {
+    const n = Number(weight);
+    if (!Number.isNaN(n) && n >= 0 && n !== we.weight) onUpdate(we.id, { weight: n });
+    else setWeight(String(we.weight)); // valor inválido → reverte
+  };
+
+  return (
+    <div className="glass-card rounded-3xl p-md flex flex-col md:flex-row md:items-center justify-between border-l-4 border-l-primary-container border-y border-r border-white/5 space-y-md md:space-y-0">
+      <div className="flex items-center gap-md">
+        {(exercise.image_demo || exercise.image_muscle) && (
+          <img
+            src={exercise.image_demo || exercise.image_muscle}
+            alt=""
+            loading="lazy"
+            className={`w-12 h-12 shrink-0 rounded-xl bg-white/5 border border-white/10 ${exercise.image_demo ? 'object-cover' : 'p-1.5'}`}
+          />
+        )}
+        <div className="space-y-xs">
+          <h4 className="text-body-lg font-bold text-white">{exercise.name_pt}</h4>
+          <p className="text-xs text-on-surface-variant font-semibold uppercase tracking-wider">
+            Grupo: {exercise.muscle_group}
+          </p>
+          {exercise.video_url && (
+            <a
+              href={exercise.video_url}
+              target="_blank"
+              rel="noopener noreferrer"
+              className="inline-flex items-center gap-1 text-[11px] font-bold text-primary-container hover:underline"
+            >
+              <PlayCircle className="w-3.5 h-3.5" /> Ver vídeo
+            </a>
+          )}
+        </div>
+      </div>
+
+      <div className="flex flex-wrap gap-md items-center">
+        {/* Séries (+/- persistem no clique — não é por tecla) */}
+        <div className="flex items-center gap-xs">
+          <Hash className="w-4 h-4 text-primary-container" />
+          <div className="flex flex-col">
+            <span className="text-[10px] text-on-surface-variant font-bold uppercase">Séries</span>
+            <div className="flex items-center gap-1">
+              <button
+                onClick={() => onUpdate(we.id, { series: Math.max(1, we.series - 1) })}
+                className="w-5 h-5 bg-[#0A0B0D] text-white hover:bg-white/10 rounded font-bold text-xs"
+              >-</button>
+              <span className="text-sm font-bold text-white w-4 text-center">{we.series}</span>
+              <button
+                onClick={() => onUpdate(we.id, { series: we.series + 1 })}
+                className="w-5 h-5 bg-[#0A0B0D] text-white hover:bg-white/10 rounded font-bold text-xs"
+              >+</button>
+            </div>
+          </div>
+        </div>
+
+        {/* Reps */}
+        <div className="flex items-center gap-xs">
+          <Dumbbell className="w-4 h-4 text-primary-container" />
+          <div className="flex flex-col">
+            <span className="text-[10px] text-on-surface-variant font-bold uppercase">Reps</span>
+            <input
+              type="text"
+              value={reps}
+              onChange={(e) => setReps(e.target.value)}
+              onBlur={commitReps}
+              className="w-16 bg-[#0A0B0D] border border-white/5 rounded px-1.5 py-0.5 text-xs text-white font-bold"
+            />
+          </div>
+        </div>
+
+        {/* Descanso */}
+        <div className="flex items-center gap-xs">
+          <Clock className="w-4 h-4 text-primary-container" />
+          <div className="flex flex-col">
+            <span className="text-[10px] text-on-surface-variant font-bold uppercase">Descanso</span>
+            <input
+              type="text"
+              value={rest}
+              onChange={(e) => setRest(e.target.value)}
+              onBlur={commitRest}
+              className="w-16 bg-[#0A0B0D] border border-white/5 rounded px-1.5 py-0.5 text-xs text-white font-bold"
+            />
+          </div>
+        </div>
+
+        {/* Carga */}
+        <div className="flex items-center gap-xs">
+          <span className="text-xs font-bold text-primary-container">KG</span>
+          <div className="flex flex-col">
+            <span className="text-[10px] text-on-surface-variant font-bold uppercase">Carga</span>
+            <input
+              type="number"
+              min="0"
+              value={weight}
+              onChange={(e) => setWeight(e.target.value)}
+              onBlur={commitWeight}
+              className="w-16 bg-[#0A0B0D] border border-white/5 rounded px-1.5 py-0.5 text-xs text-white font-bold"
+            />
+          </div>
+        </div>
+
+        <button
+          onClick={() => onDelete(we.id)}
+          className="p-2 text-on-surface-variant hover:text-red-500 rounded-lg hover:bg-white/5 transition-colors md:ml-md"
+          title="Remover do Treino"
+        >
+          <Trash2 className="w-4.5 h-4.5" />
+        </button>
+      </div>
+    </div>
+  );
+};
 
 export default function WorkoutSetupView({
   workouts,
@@ -487,130 +621,14 @@ export default function WorkoutSetupView({
                 {currentWorkoutExercises.map((we) => {
                   const exerciseDetails = exercises.find((ex) => ex.id === we.exercise_id);
                   if (!exerciseDetails) return null;
-
                   return (
-                    <div
+                    <WorkoutExerciseRow
                       key={we.id}
-                      className="glass-card rounded-3xl p-md flex flex-col md:flex-row md:items-center justify-between border-l-4 border-l-primary-container border-y border-r border-white/5 space-y-md md:space-y-0"
-                    >
-                      <div className="flex items-center gap-md">
-                        {(exerciseDetails.image_demo || exerciseDetails.image_muscle) && (
-                          <img
-                            src={exerciseDetails.image_demo || exerciseDetails.image_muscle}
-                            alt=""
-                            loading="lazy"
-                            className={`w-12 h-12 shrink-0 rounded-xl bg-white/5 border border-white/10 ${exerciseDetails.image_demo ? 'object-cover' : 'p-1.5'}`}
-                          />
-                        )}
-                        <div className="space-y-xs">
-                          <h4 className="text-body-lg font-bold text-white">
-                            {exerciseDetails.name_pt}
-                          </h4>
-                          <p className="text-xs text-on-surface-variant font-semibold uppercase tracking-wider">
-                            Grupo: {exerciseDetails.muscle_group}
-                          </p>
-                          {exerciseDetails.video_url && (
-                            <a
-                              href={exerciseDetails.video_url}
-                              target="_blank"
-                              rel="noopener noreferrer"
-                              className="inline-flex items-center gap-1 text-[11px] font-bold text-primary-container hover:underline"
-                            >
-                              <PlayCircle className="w-3.5 h-3.5" /> Ver vídeo
-                            </a>
-                          )}
-                        </div>
-                      </div>
-
-                      {/* Display / edit metrics inside card inline */}
-                      <div className="flex flex-wrap gap-md items-center">
-                        {/* Series adjustment */}
-                        <div className="flex items-center gap-xs">
-                          <Hash className="w-4 h-4 text-primary-container" />
-                          <div className="flex flex-col">
-                            <span className="text-[10px] text-on-surface-variant font-bold uppercase">Séries</span>
-                            <div className="flex items-center gap-1">
-                              <button
-                                onClick={() =>
-                                  onUpdateWorkoutExercise(we.id, { series: Math.max(1, we.series - 1) })
-                                }
-                                className="w-5 h-5 bg-[#0A0B0D] text-white hover:bg-white/10 rounded font-bold text-xs"
-                              >
-                                -
-                              </button>
-                              <span className="text-sm font-bold text-white w-4 text-center">
-                                {we.series}
-                              </span>
-                              <button
-                                onClick={() =>
-                                  onUpdateWorkoutExercise(we.id, { series: we.series + 1 })
-                                }
-                                className="w-5 h-5 bg-[#0A0B0D] text-white hover:bg-white/10 rounded font-bold text-xs"
-                              >
-                                +
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-
-                        {/* Reps */}
-                        <div className="flex items-center gap-xs">
-                          <Dumbbell className="w-4 h-4 text-primary-container" />
-                          <div className="flex flex-col">
-                            <span className="text-[10px] text-on-surface-variant font-bold uppercase">Reps</span>
-                            <input
-                              type="text"
-                              value={we.repetitions}
-                              onChange={(e) =>
-                                onUpdateWorkoutExercise(we.id, { repetitions: e.target.value })
-                              }
-                              className="w-16 bg-[#0A0B0D] border border-white/5 rounded px-1.5 py-0.5 text-xs text-white font-bold"
-                            />
-                          </div>
-                        </div>
-
-                        {/* Rest Time */}
-                        <div className="flex items-center gap-xs">
-                          <Clock className="w-4 h-4 text-primary-container" />
-                          <div className="flex flex-col">
-                            <span className="text-[10px] text-on-surface-variant font-bold uppercase">Descanso</span>
-                            <input
-                              type="text"
-                              value={we.rest_time}
-                              onChange={(e) =>
-                                onUpdateWorkoutExercise(we.id, { rest_time: e.target.value })
-                              }
-                              className="w-16 bg-[#0A0B0D] border border-white/5 rounded px-1.5 py-0.5 text-xs text-white font-bold"
-                            />
-                          </div>
-                        </div>
-
-                        {/* Weight */}
-                        <div className="flex items-center gap-xs">
-                          <span className="text-xs font-bold text-primary-container">KG</span>
-                          <div className="flex flex-col">
-                            <span className="text-[10px] text-on-surface-variant font-bold uppercase">Carga</span>
-                            <input
-                              type="number"
-                              value={we.weight}
-                              onChange={(e) =>
-                                onUpdateWorkoutExercise(we.id, { weight: Number(e.target.value) })
-                              }
-                              className="w-16 bg-[#0A0B0D] border border-white/5 rounded px-1.5 py-0.5 text-xs text-white font-bold"
-                            />
-                          </div>
-                        </div>
-
-                        {/* Delete button */}
-                        <button
-                          onClick={() => onDeleteWorkoutExercise(we.id)}
-                          className="p-2 text-on-surface-variant hover:text-red-500 rounded-lg hover:bg-white/5 transition-colors md:ml-md"
-                          title="Remover do Treino"
-                        >
-                          <Trash2 className="w-4.5 h-4.5" />
-                        </button>
-                      </div>
-                    </div>
+                      we={we}
+                      exercise={exerciseDetails}
+                      onUpdate={onUpdateWorkoutExercise}
+                      onDelete={onDeleteWorkoutExercise}
+                    />
                   );
                 })}
               </div>

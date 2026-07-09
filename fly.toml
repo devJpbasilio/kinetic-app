@@ -8,13 +8,8 @@ primary_region = "gru"  # São Paulo — mais perto do Brasil
 [env]
   NODE_ENV = "production"
   PORT = "3000"
-  # Banco no disco persistente (volume montado abaixo)
-  DB_PATH = "/data/kinetic.db"
-
-# Disco persistente onde o kinetic.db é guardado (sobrevive a deploys)
-[mounts]
-  source = "kinetic_data"
-  destination = "/data"
+  # DATABASE_URL (Postgres/Neon) e ADMIN_* devem ser definidos como secrets:
+  #   fly secrets set DATABASE_URL="postgresql://..." ADMIN_EMAIL="..." ADMIN_PASSWORD="..."
 
 [http_service]
   internal_port = 3000

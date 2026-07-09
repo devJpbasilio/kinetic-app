@@ -211,15 +211,6 @@ export default function DashboardView({ user, workouts, onStartWorkout, onNaviga
                 Esta semana
               </p>
             </div>
-            {/* Small Sparkline visualization */}
-            <div className="absolute bottom-0 left-0 w-full h-12 opacity-25 pointer-events-none">
-              <svg className="w-full h-full" preserveAspectRatio="none" viewBox="0 0 100 40">
-                <path 
-                  d="M0 40 L10 30 L20 35 L30 15 L40 25 L50 10 L60 20 L70 5 L80 15 L90 10 L100 20 V40 H0 Z" 
-                  fill="#caf300"
-                ></path>
-              </svg>
-            </div>
           </div>
         </div>
       </section>

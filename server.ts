@@ -2,14 +2,12 @@ import 'dotenv/config'; // IMPORTANTE: carrega o .env ANTES de qualquer módulo 
 import express from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import path from 'path';
-import { createServer as createViteServer } from 'vite';
 import { GoogleGenAI, Type } from '@google/genai';
 import nodemailer from 'nodemailer';
 import { db } from './src/db';
-import dotenv from 'dotenv';
-
-// Load environment variables
-dotenv.config();
+import { generatePlan } from './src/generator/engine';
+import { CURATED_BY_SLUG } from './src/generator/exercises';
+import type { GeneratorPreferences, Nivel, Objetivo, Local, Equipamento, Regiao } from './src/generator/types';
 
 // Initialize Gemini Client
 let ai: GoogleGenAI | null = null;
@@ -45,7 +43,15 @@ function parseCookies(req: Request): Record<string, string> {
   for (const part of header.split(';')) {
     const idx = part.indexOf('=');
     if (idx === -1) continue;
-    out[part.slice(0, idx).trim()] = decodeURIComponent(part.slice(idx + 1).trim());
+    const key = part.slice(0, idx).trim();
+    const rawVal = part.slice(idx + 1).trim();
+    // Cookie malformado (ex.: "%" isolado) faz decodeURIComponent lançar URIError.
+    // Não deixar isso derrubar a rota com 500 — usa o valor bruto como fallback.
+    try {
+      out[key] = decodeURIComponent(rawVal);
+    } catch {
+      out[key] = rawVal;
+    }
   }
   return out;
 }
@@ -71,7 +77,7 @@ async function requireAuth(req: Request, res: Response, next: NextFunction) {
     (req as any).user = user;
     next();
   } catch (e: any) {
-    res.status(500).json({ error: e.message });
+    handleError(res, e, 'requireAuth');
   }
 }
 
@@ -88,9 +94,37 @@ function isValidEmail(email: unknown): email is string {
   return typeof email === 'string' && /^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim());
 }
 
+// Tratamento centralizado de erros: loga o detalhe no servidor e devolve uma
+// mensagem genérica ao cliente (nunca expõe e.message/schema do Postgres).
+// Erros esperados do banco são mapeados para códigos HTTP adequados.
+function handleError(res: Response, e: any, context = 'api'): void {
+  const code = e?.code;
+  if (code === '23505') {
+    // unique_violation → conflito (recurso já existe)
+    res.status(409).json({ error: 'Registro já existe.' });
+    return;
+  }
+  if (code === '23503') {
+    // foreign_key_violation → referência inválida enviada pelo cliente
+    res.status(400).json({ error: 'Referência inválida: um dos itens informados não existe.' });
+    return;
+  }
+  console.error(`[${context}]`, e);
+  res.status(500).json({ error: 'Erro interno do servidor.' });
+}
+
 // ---------- Rate limiter simples em memória ----------
 function createRateLimiter(maxRequests: number, windowMs: number) {
   const hits = new Map<string, { count: number; windowStart: number }>();
+  // Varredura periódica para remover janelas expiradas — sem isso o Map cresce
+  // indefinidamente (uma entrada por IP já visto = leak de memória lento).
+  const sweep = setInterval(() => {
+    const now = Date.now();
+    for (const [key, entry] of hits) {
+      if (now - entry.windowStart > windowMs) hits.delete(key);
+    }
+  }, windowMs);
+  sweep.unref?.(); // não impede o processo de encerrar
   return (req: Request, res: Response, next: NextFunction) => {
     const key = req.ip || 'global';
     const now = Date.now();
@@ -141,24 +175,52 @@ const mailTransport = (() => {
   return null;
 })();
 
-async function sendResetEmail(to: string, link: string) {
-  if (!mailTransport) {
-    console.log(`\n──────── REDEFINIÇÃO DE SENHA (dev) ────────\nPara: ${to}\nLink (válido 1h): ${link}\nConfigure GMAIL_USER/GMAIL_APP_PASSWORD (ou SMTP_*) no .env para enviar por e-mail.\n────────────────────────────────────────────\n`);
-    return;
-  }
-  await mailTransport.sendMail({
-    from: `Kinetic <${MAIL_FROM}>`,
-    to,
-    subject: 'Redefinição de senha — Kinetic',
-    text: `Você pediu para redefinir sua senha no Kinetic.\n\nAbra o link abaixo (válido por 1 hora):\n${link}\n\nSe não foi você, ignore este e-mail.`,
-    html: `
+const RESET_SUBJECT = 'Redefinição de senha — Kinetic';
+function resetEmailBodies(link: string) {
+  const text = `Você pediu para redefinir sua senha no Kinetic.\n\nAbra o link abaixo (válido por 1 hora):\n${link}\n\nSe não foi você, ignore este e-mail.`;
+  const html = `
       <div style="font-family:Arial,sans-serif;max-width:480px;margin:0 auto;padding:24px;color:#0A0B0D">
         <h2 style="margin:0 0 8px">Redefinição de senha</h2>
         <p style="color:#555;margin:0 0 20px">Você pediu para redefinir sua senha no <strong>Kinetic</strong>. O link é válido por 1 hora.</p>
         <a href="${link}" style="display:inline-block;background:#CCFF00;color:#0A0B0D;font-weight:bold;text-decoration:none;padding:12px 20px;border-radius:10px">Redefinir minha senha</a>
         <p style="color:#888;font-size:12px;margin:20px 0 0">Se não foi você, ignore este e-mail. O link expira em 1 hora.</p>
-      </div>`,
-  });
+      </div>`;
+  return { text, html };
+}
+
+async function sendResetEmail(to: string, link: string) {
+  const { text, html } = resetEmailBodies(link);
+
+  // 1) Brevo via API HTTPS (funciona em hosts que bloqueiam SMTP, ex.: Render Free)
+  if (process.env.BREVO_API_KEY) {
+    const r = await fetch('https://api.brevo.com/v3/smtp/email', {
+      method: 'POST',
+      headers: {
+        'api-key': process.env.BREVO_API_KEY,
+        'content-type': 'application/json',
+        'accept': 'application/json',
+      },
+      body: JSON.stringify({
+        sender: { email: MAIL_FROM, name: 'Kinetic' },
+        to: [{ email: to }],
+        subject: RESET_SUBJECT,
+        htmlContent: html,
+        textContent: text,
+      }),
+      signal: AbortSignal.timeout(15_000),
+    });
+    if (!r.ok) throw new Error(`Brevo ${r.status}: ${await r.text().catch(() => '')}`);
+    return;
+  }
+
+  // 2) SMTP/Gmail via nodemailer (uso local; muitos hosts bloqueiam SMTP)
+  if (mailTransport) {
+    await mailTransport.sendMail({ from: `Kinetic <${MAIL_FROM}>`, to, subject: RESET_SUBJECT, text, html });
+    return;
+  }
+
+  // 3) Sem provedor configurado: mostra o link no console (desenvolvimento)
+  console.log(`\n──────── REDEFINIÇÃO DE SENHA (dev) ────────\nPara: ${to}\nLink (válido 1h): ${link}\nConfigure BREVO_API_KEY + MAIL_FROM (ou GMAIL_*/SMTP_* local) para enviar por e-mail.\n────────────────────────────────────────────\n`);
 }
 
 // Escolhe o primeiro campo não-vazio dentre várias chaves possíveis
@@ -289,7 +351,7 @@ async function startServer() {
       await db.createUser(email, password); // role 'user', status 'pending'
       res.status(201).json({ status: 'pending', message: 'Cadastro enviado. Aguarde a aprovação de um administrador.' });
     } catch (e: any) {
-      res.status(500).json({ error: e.message });
+      handleError(res, e);
     }
   });
 
@@ -309,7 +371,7 @@ async function startServer() {
       res.setHeader('Set-Cookie', sessionCookie(session.token, SESSION_MAX_AGE_S));
       res.json({ user: await authPayload(user) });
     } catch (e: any) {
-      res.status(500).json({ error: e.message });
+      handleError(res, e);
     }
   });
 
@@ -350,7 +412,7 @@ async function startServer() {
       await db.setUserPassword(userId, password); // também invalida sessões existentes
       res.json({ success: true, message: 'Senha redefinida. Faça login com a nova senha.' });
     } catch (e: any) {
-      res.status(500).json({ error: e.message });
+      handleError(res, e);
     }
   });
 
@@ -380,7 +442,7 @@ async function startServer() {
       await db.setUserPassword(me.id, next);
       res.json({ success: true, message: 'Senha alterada. Faça login novamente.' });
     } catch (e: any) {
-      res.status(500).json({ error: e.message });
+      handleError(res, e);
     }
   });
 
@@ -478,7 +540,7 @@ async function startServer() {
     try {
       res.json(await authPayload(currentUser(req)));
     } catch (e: any) {
-      res.status(500).json({ error: e.message });
+      handleError(res, e);
     }
   });
 
@@ -488,7 +550,7 @@ async function startServer() {
       await db.updateUserProfile(uid(req), req.body);
       res.json(await authPayload(currentUser(req)));
     } catch (e: any) {
-      res.status(500).json({ error: e.message });
+      handleError(res, e);
     }
   });
 
@@ -497,7 +559,7 @@ async function startServer() {
     try {
       res.json(await db.getExercises(uid(req)));
     } catch (e: any) {
-      res.status(500).json({ error: e.message });
+      handleError(res, e);
     }
   });
 
@@ -517,7 +579,7 @@ async function startServer() {
       });
       res.status(201).json(newEx);
     } catch (e: any) {
-      res.status(500).json({ error: e.message });
+      handleError(res, e);
     }
   });
 
@@ -528,7 +590,7 @@ async function startServer() {
       if (!updated) return res.status(404).json({ error: "Exercício não encontrado." });
       res.json(updated);
     } catch (e: any) {
-      res.status(500).json({ error: e.message });
+      handleError(res, e);
     }
   });
 
@@ -539,7 +601,7 @@ async function startServer() {
       if (!success) return res.status(404).json({ error: "Exercício não encontrado." });
       res.json({ success: true });
     } catch (e: any) {
-      res.status(500).json({ error: e.message });
+      handleError(res, e);
     }
   });
 
@@ -653,8 +715,7 @@ ${rawText}`;
       });
 
     } catch (e: any) {
-      console.error("Gemini Translation Error:", e);
-      res.status(500).json({ error: "Falha ao traduzir e importar exercícios: " + e.message });
+      handleError(res, e, 'translate-import');
     }
   });
 
@@ -663,7 +724,7 @@ ${rawText}`;
     try {
       res.json(await db.getWorkouts(uid(req)));
     } catch (e: any) {
-      res.status(500).json({ error: e.message });
+      handleError(res, e);
     }
   });
 
@@ -675,7 +736,7 @@ ${rawText}`;
       const newW = await db.addWorkout(uid(req), name);
       res.status(201).json(newW);
     } catch (e: any) {
-      res.status(500).json({ error: e.message });
+      handleError(res, e);
     }
   });
 
@@ -688,7 +749,7 @@ ${rawText}`;
       if (!updated) return res.status(404).json({ error: "Treino não encontrado." });
       res.json(updated);
     } catch (e: any) {
-      res.status(500).json({ error: e.message });
+      handleError(res, e);
     }
   });
 
@@ -699,7 +760,84 @@ ${rawText}`;
       if (!success) return res.status(404).json({ error: "Treino não encontrado." });
       res.json({ success: true });
     } catch (e: any) {
-      res.status(500).json({ error: e.message });
+      handleError(res, e);
+    }
+  });
+
+  // Gera um plano de treino inteligente a partir das preferências do usuário.
+  // persist=false → apenas prévia (não grava). persist=true → cria os treinos.
+  app.post('/api/workouts/generate', async (req, res) => {
+    try {
+      const b = req.body || {};
+
+      const NIVEIS: Nivel[] = ['iniciante', 'intermediario', 'avancado'];
+      const OBJETIVOS: Objetivo[] = ['hipertrofia', 'emagrecimento'];
+      const LOCAIS: Local[] = ['academia_completa', 'academia_basica', 'casa'];
+      const EQUIPS: Equipamento[] = ['Barra', 'Halteres', 'Máquina', 'Cabo', 'Peso Corporal', 'Elástico', 'Kettlebell'];
+      const REGIOES: Regiao[] = ['peito', 'costas', 'ombro', 'biceps', 'triceps', 'quadriceps', 'posterior', 'gluteo', 'panturrilha', 'abdomen', 'trapezio'];
+      const TEMPOS = [30, 45, 60, 90];
+
+      if (!NIVEIS.includes(b.nivel)) return res.status(400).json({ error: 'Nível inválido.' });
+      if (!OBJETIVOS.includes(b.objetivo)) return res.status(400).json({ error: 'Objetivo inválido.' });
+      if (!LOCAIS.includes(b.local)) return res.status(400).json({ error: 'Local inválido.' });
+      const dias = Number(b.dias);
+      if (!Number.isFinite(dias) || dias < 2 || dias > 6) return res.status(400).json({ error: 'Dias deve estar entre 2 e 6.' });
+      const tempo = Number(b.tempo);
+      if (!TEMPOS.includes(tempo)) return res.status(400).json({ error: 'Tempo inválido (use 30, 45, 60 ou 90).' });
+
+      function filterArr(v: any, allowed: readonly string[]): any[] {
+        return Array.isArray(v) ? v.filter((x: any) => allowed.includes(x)) : [];
+      }
+
+      const prefs: GeneratorPreferences = {
+        objetivo: b.objetivo,
+        nivel: b.nivel,
+        dias,
+        tempo: tempo as (30 | 45 | 60 | 90),
+        local: b.local,
+        equipamentos: filterArr(b.equipamentos, EQUIPS) as Equipamento[],
+        restricoes: filterArr(b.restricoes, REGIOES) as Regiao[],
+        preferencias: filterArr(b.preferencias, EQUIPS) as Equipamento[],
+        excluir: Array.isArray(b.excluir) ? b.excluir.map(String) : [],
+      };
+
+      const plan = generatePlan(prefs);
+
+      // Se os filtros (equipamentos/restrições) esvaziarem o pool, o plano vem
+      // sem exercícios. Nunca devolve/salva um plano vazio — orienta o usuário.
+      const totalExercicios = plan.treinos.reduce((n, d) => n + d.exercicios.length, 0);
+      if (totalExercicios === 0) {
+        return res.status(422).json({
+          error: 'Nenhum exercício corresponde aos filtros escolhidos. Selecione mais equipamentos ou remova algumas restrições.',
+        });
+      }
+
+      if (!b.persist) {
+        return res.json({ plan, persisted: false });
+      }
+
+      // Persiste: cria um treino por dia com os exercícios (usa a base curada).
+      const days = plan.treinos.map((day) => {
+        return {
+          nome: day.nome,
+          exercicios: day.exercicios.map((ex) => {
+            const c = CURATED_BY_SLUG[ex.slug];
+            return {
+              slug: ex.slug,
+              nome: ex.nome,
+              name_en: c?.name_en || ex.nome,
+              grupoMuscular: ex.grupoMuscular,
+              series: ex.series,
+              repeticoes: ex.repeticoes,
+              descanso: ex.descanso,
+            };
+          }),
+        };
+      });
+      const workouts = await db.createGeneratedPlan(uid(req), days);
+      res.status(201).json({ plan, persisted: true, workouts });
+    } catch (e: any) {
+      handleError(res, e);
     }
   });
 
@@ -708,7 +846,7 @@ ${rawText}`;
     try {
       res.json(await db.getWorkoutExercises(uid(req)));
     } catch (e: any) {
-      res.status(500).json({ error: e.message });
+      handleError(res, e);
     }
   });
 
@@ -718,7 +856,7 @@ ${rawText}`;
       const list = await db.getWorkoutExercisesForWorkout(uid(req), req.params.id);
       res.json(list);
     } catch (e: any) {
-      res.status(500).json({ error: e.message });
+      handleError(res, e);
     }
   });
 
@@ -726,7 +864,13 @@ ${rawText}`;
   app.post('/api/workouts/:id/exercises', async (req, res) => {
     try {
       const { exercise_id, series, repetitions, rest_time, weight } = req.body;
-      if (!exercise_id) return res.status(400).json({ error: "Id do exercício é obrigatório." });
+      if (!exercise_id || typeof exercise_id !== 'string') {
+        return res.status(400).json({ error: "Id do exercício é obrigatório." });
+      }
+      // Garante que o exercício existe E pertence ao usuário (evita FK 500 e
+      // vínculos órfãos com exercícios de outra conta que a UI não renderiza).
+      const ex = await db.getExerciseById(uid(req), exercise_id);
+      if (!ex) return res.status(404).json({ error: "Exercício não encontrado na sua biblioteca." });
 
       const newWe = await db.addWorkoutExercise(uid(req), {
         workout_id: req.params.id,
@@ -739,7 +883,7 @@ ${rawText}`;
       if (!newWe) return res.status(404).json({ error: "Treino não encontrado." });
       res.status(201).json(newWe);
     } catch (e: any) {
-      res.status(500).json({ error: e.message });
+      handleError(res, e);
     }
   });
 
@@ -750,7 +894,7 @@ ${rawText}`;
       if (!updated) return res.status(404).json({ error: "Exercício do treino não encontrado." });
       res.json(updated);
     } catch (e: any) {
-      res.status(500).json({ error: e.message });
+      handleError(res, e);
     }
   });
 
@@ -761,7 +905,7 @@ ${rawText}`;
       if (!success) return res.status(404).json({ error: "Exercício do treino não encontrado." });
       res.json({ success: true });
     } catch (e: any) {
-      res.status(500).json({ error: e.message });
+      handleError(res, e);
     }
   });
 
@@ -770,7 +914,7 @@ ${rawText}`;
     try {
       res.json(await db.getWorkoutLogs(uid(req)));
     } catch (e: any) {
-      res.status(500).json({ error: e.message });
+      handleError(res, e);
     }
   });
 
@@ -779,29 +923,58 @@ ${rawText}`;
   app.post('/api/logs', async (req, res) => {
     try {
       const { workout_id, workout_name, duration, calories, notes, date } = req.body;
-      if (!workout_name || !duration) {
-        return res.status(400).json({ error: "Nome do treino e duração são obrigatórios." });
+      if (typeof workout_name !== 'string' || !workout_name.trim()) {
+        return res.status(400).json({ error: "Nome do treino é obrigatório." });
+      }
+      // Duração: inteiro entre 1 e 1440 minutos (evita NaN/negativos que corrompem stats).
+      const dur = Number(duration);
+      if (!Number.isFinite(dur) || dur < 1 || dur > 1440) {
+        return res.status(400).json({ error: "Duração deve ser um número entre 1 e 1440 minutos." });
+      }
+      // Calorias (opcional): não-negativas; senão estima a partir da duração.
+      let cal = Number(calories);
+      if (!Number.isFinite(cal) || cal < 0) cal = Math.round(dur * 7.5);
+      // Data (opcional): formato YYYY-MM-DD e não-futura.
+      const today = new Date().toISOString().slice(0, 10);
+      let logDate = today;
+      if (date !== undefined && date !== null && date !== '') {
+        if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date) || isNaN(new Date(`${date}T00:00:00`).getTime())) {
+          return res.status(400).json({ error: "Data inválida (use o formato AAAA-MM-DD)." });
+        }
+        if (date > today) {
+          return res.status(400).json({ error: "A data do treino não pode ser no futuro." });
+        }
+        logDate = date;
       }
 
       const newLog = await db.addWorkoutLog(uid(req), {
-        workout_id: workout_id || "custom",
-        workout_name,
-        date: date || new Date().toISOString().slice(0, 10),
-        duration: Number(duration),
-        calories: Number(calories) || Math.round(Number(duration) * 7.5), // estimate calories if not provided
-        notes: notes || ""
+        workout_id: (typeof workout_id === 'string' && workout_id) ? workout_id : "custom",
+        workout_name: workout_name.trim(),
+        date: logDate,
+        duration: Math.round(dur),
+        calories: Math.round(cal),
+        notes: typeof notes === 'string' ? notes.slice(0, 2000) : ""
       });
 
       res.status(201).json({ log: newLog, user: await db.getUserProfile(uid(req)) });
     } catch (e: any) {
-      res.status(500).json({ error: e.message });
+      handleError(res, e);
     }
   });
 
   // --- End API Routes ---
 
-  // Vite Integration
+  // Qualquer /api/* não tratado acima → 404 JSON (nunca o HTML do SPA, que
+  // quebraria o res.json() do cliente com um erro de parse confuso).
+  app.use('/api', (_req, res) => {
+    res.status(404).json({ error: 'Endpoint não encontrado.' });
+  });
+
+  // Vite Integration (só em dev). Import dinâmico: em produção o Vite nem é
+  // carregado — economiza memória e mantém a imagem/bundle menores (o Vite fica
+  // em devDependencies e não precisa estar presente no runtime de produção).
   if (process.env.NODE_ENV !== "production") {
+    const { createServer: createViteServer } = await import('vite');
     const vite = await createViteServer({
       server: { middlewareMode: true },
       appType: "spa",

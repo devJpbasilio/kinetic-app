@@ -1,7 +1,8 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { Workout, WorkoutExercise, Exercise } from '../types';
-import { X, Play, Pause, Timer, History, Check, ShieldAlert, Dumbbell, Clock, Flame, Sparkles, PlayCircle } from 'lucide-react';
+import { X, Play, Pause, Timer, Check, ShieldAlert, Dumbbell, Clock, Flame, Sparkles, PlayCircle } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
+import { parseRestTime } from '../utils/parseRestTime';
 
 interface ActiveWorkoutViewProps {
   workout: Workout;
@@ -30,13 +31,15 @@ export default function ActiveWorkoutView({
 
   // Time tracking
   const startTimeRef = useRef(Date.now());
-  const [elapsedMinutes, setElapsedMinutes] = useState(0);
 
   // Rest Timer States
   const [restSecondsLeft, setRestSecondsLeft] = useState(0);
   const [isResting, setIsResting] = useState(false);
   const [isTimerPaused, setIsTimerPaused] = useState(false);
   const timerIntervalRef = useRef<NodeJS.Timeout | null>(null);
+  // Instante-alvo do fim do descanso: o tempo restante é derivado dele, então
+  // o timer permanece correto mesmo se a aba for throttled em segundo plano.
+  const restEndRef = useRef<number | null>(null);
 
   // Final submit states
   const [showSummaryModal, setShowSummaryModal] = useState(false);
@@ -49,29 +52,21 @@ export default function ActiveWorkoutView({
   const activeWE = activeWorkoutExercises[currentExIdx] || null;
   const activeEx = activeWE ? exercises.find((ex) => ex.id === activeWE.exercise_id) : null;
 
-  // Track session elapsed minutes
-  useEffect(() => {
-    const elapsedTimer = setInterval(() => {
-      const mins = Math.floor((Date.now() - startTimeRef.current) / 60000);
-      setElapsedMinutes(mins || 1); // default to at least 1 min
-    }, 10000);
-    return () => clearInterval(elapsedTimer);
-  }, []);
-
-  // Timer interval control
+  // Timer de descanso baseado em timestamp-alvo (robusto a throttling de aba).
   useEffect(() => {
     if (isResting && !isTimerPaused) {
+      // (Re)define o alvo a partir do que resta agora — preserva pausa/retomada.
+      restEndRef.current = Date.now() + restSecondsLeft * 1000;
       timerIntervalRef.current = setInterval(() => {
-        setRestSecondsLeft((prev) => {
-          if (prev <= 1) {
-            clearInterval(timerIntervalRef.current!);
-            setIsResting(false);
-            // Flash or play a subtle sound if possible, but standard alert or notification is fine
-            return 0;
-          }
-          return prev - 1;
-        });
-      }, 1000);
+        const remaining = Math.round(((restEndRef.current ?? 0) - Date.now()) / 1000);
+        if (remaining <= 0) {
+          clearInterval(timerIntervalRef.current!);
+          setIsResting(false);
+          setRestSecondsLeft(0);
+        } else {
+          setRestSecondsLeft(remaining);
+        }
+      }, 250);
     } else {
       if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
     }
@@ -79,6 +74,9 @@ export default function ActiveWorkoutView({
     return () => {
       if (timerIntervalRef.current) clearInterval(timerIntervalRef.current);
     };
+    // restSecondsLeft de propósito fora das deps: só (re)inicia ao alternar
+    // descanso/pausa; o intervalo atualiza o valor sem reiniciar o efeito.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [isResting, isTimerPaused]);
 
   // Handle concluding a series
@@ -89,11 +87,8 @@ export default function ActiveWorkoutView({
       // Move to next series and trigger rest timer!
       setCurrentSeries(currentSeries + 1);
 
-      // Parse rest time (e.g. "01:45" to seconds)
-      const restParts = activeWE.rest_time.split(':');
-      const mins = parseInt(restParts[0]) || 1;
-      const secs = parseInt(restParts[1]) || 30;
-      const totalSecs = mins * 60 + secs;
+      // Parse rest time (e.g. "01:45" → segundos). Ver src/utils/parseRestTime.
+      const totalSecs = parseRestTime(activeWE.rest_time);
 
       setRestSecondsLeft(totalSecs);
       setIsResting(true);
@@ -119,7 +114,7 @@ export default function ActiveWorkoutView({
   const handleOpenSummary = () => {
     const totalMins = Math.max(1, Math.floor((Date.now() - startTimeRef.current) / 60000));
     setCustomDuration(totalMins);
-    setCustomCalories(totalMins * 8); // estimate 8 calories per minute of high intensity
+    setCustomCalories(Math.round(totalMins * 7.5)); // ~7,5 kcal/min (alinhado ao back)
     setShowSummaryModal(true);
   };
 
@@ -228,7 +223,9 @@ export default function ActiveWorkoutView({
                 <div
                   key={idx}
                   className={`w-2.5 h-2.5 rounded-full transition-all duration-300 ${
-                    idx < currentSeries ? 'bg-primary-container scale-110 shadow-[0_0_8px_#CCFF00]' : 'bg-white/20'
+                    idx < currentSeries - 1 ? 'bg-primary-container shadow-[0_0_8px_#CCFF00]'
+                      : idx === currentSeries - 1 ? 'bg-primary-container scale-110 shadow-[0_0_8px_#CCFF00]'
+                      : 'bg-white/20'
                   }`}
                 />
               ))}
@@ -314,11 +311,6 @@ export default function ActiveWorkoutView({
               <span className="text-sm font-semibold">Descanso sugerido: {activeWE.rest_time}</span>
             </div>
           )}
-
-          <button className="text-label-md text-on-surface-variant flex items-center gap-1 uppercase font-bold hover:text-white transition-colors">
-            <History className="w-4 h-4 text-primary-container" />
-            Anterior: {activeWE.weight - 5} kg
-          </button>
         </div>
       </section>
 

@@ -1,7 +1,8 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { UserProfile, AccountUser, Exercise, Workout, WorkoutExercise, WorkoutLog } from './types';
 import DashboardView from './components/DashboardView';
 import WorkoutSetupView from './components/WorkoutSetupView';
+import WorkoutGeneratorView from './components/WorkoutGeneratorView';
 import HistoryView from './components/HistoryView';
 import ActiveWorkoutView from './components/ActiveWorkoutView';
 import { Home, Dumbbell, Calendar, Sparkles, User, RefreshCw, AlertCircle, LogOut, Lock, Mail, Users, Check, X, Trash2, ShieldCheck, Clock } from 'lucide-react';
@@ -63,6 +64,16 @@ export default function App() {
     checkAuth();
   }, []);
 
+  // Fecha os modais (admin/perfil) com a tecla Escape.
+  useEffect(() => {
+    if (!showAdmin && !showProfile) return;
+    const onKey = (e: KeyboardEvent) => {
+      if (e.key === 'Escape') { setShowAdmin(false); setShowProfile(false); }
+    };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [showAdmin, showProfile]);
+
   const checkAuth = async () => {
     try {
       const res = await fetch('/api/auth/me');
@@ -70,7 +81,9 @@ export default function App() {
         const data = await res.json();
         setUser(data.user);
         setAuthStatus('ok');
-        fetchData();
+        // Reaproveita o perfil já retornado por /me (evita refazer /api/user,
+        // que recalcularia as stats no servidor sem necessidade).
+        fetchData(data.user);
       } else {
         setAuthStatus('login');
         setLoading(false);
@@ -129,7 +142,7 @@ export default function App() {
       setUser(data.user);
       setPasswordInput('');
       setAuthStatus('ok');
-      fetchData();
+      fetchData(data.user);
     } catch {
       setLoginError('Erro de rede. Verifique sua conexão.');
     } finally {
@@ -165,14 +178,16 @@ export default function App() {
     } catch { /* ignore */ }
   };
 
-  const rejectUser = async (id: string) => {
+  const rejectUser = async (id: string, email: string) => {
+    if (!window.confirm(`Rejeitar e apagar a solicitação de "${email}"? Esta ação não pode ser desfeita.`)) return;
     try {
       const res = await fetch(`/api/admin/users/${id}/reject`, { method: 'POST' });
       if (res.ok) { triggerToast('Solicitação rejeitada.'); loadAdminUsers(); }
     } catch { /* ignore */ }
   };
 
-  const removeUser = async (id: string) => {
+  const removeUser = async (id: string, email: string) => {
+    if (!window.confirm(`Remover o usuário "${email}" e TODOS os seus dados (treinos, exercícios, histórico)? Esta ação não pode ser desfeita.`)) return;
     try {
       const res = await fetch(`/api/admin/users/${id}`, { method: 'DELETE' });
       const data = await res.json().catch(() => ({}));
@@ -222,31 +237,41 @@ export default function App() {
     setUser(null);
     setActiveWorkout(null);
     setActiveTab('inicio');
+    // Não deixar dados do usuário anterior em memória (evita vazamento entre contas)
+    setExercises([]);
+    setWorkouts([]);
+    setWorkoutExercises([]);
+    setLogs([]);
+    setError(null);
+    setShowAdmin(false);
+    setShowProfile(false);
   };
 
-  const fetchData = async () => {
+  // preloadedUser: perfil já obtido por /api/auth/me no boot. Quando presente,
+  // não refazemos GET /api/user (economiza uma requisição + recálculo de stats).
+  const fetchData = async (preloadedUser?: UserProfile) => {
     setLoading(true);
     setError(null);
     try {
       const [userRes, exRes, workoutsRes, weRes, logsRes] = await Promise.all([
-        fetch('/api/user'),
+        preloadedUser ? null : fetch('/api/user'),
         fetch('/api/exercises'),
         fetch('/api/workouts'),
         fetch('/api/workout-exercises'),
         fetch('/api/logs'),
       ]);
 
-      if (userRes.status === 401) {
+      if (userRes?.status === 401 || exRes.status === 401) {
         setAuthStatus('login');
         setLoading(false);
         return;
       }
 
-      if (!userRes.ok || !exRes.ok || !workoutsRes.ok || !weRes.ok || !logsRes.ok) {
+      if ((userRes && !userRes.ok) || !exRes.ok || !workoutsRes.ok || !weRes.ok || !logsRes.ok) {
         throw new Error("Erro ao carregar dados do servidor.");
       }
 
-      const userData = await userRes.json();
+      const userData = preloadedUser ?? await userRes!.json();
       const exData = await exRes.json();
       const workoutsData = await workoutsRes.json();
       const weData = await weRes.json();
@@ -265,9 +290,11 @@ export default function App() {
     }
   };
 
+  const toastTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const triggerToast = (msg: string) => {
+    if (toastTimeoutRef.current) clearTimeout(toastTimeoutRef.current);
     setToastMessage(msg);
-    setTimeout(() => setToastMessage(null), 4000);
+    toastTimeoutRef.current = setTimeout(() => setToastMessage(null), 4000);
   };
 
   // --- USER PROFILE OPERATIONS ---
@@ -697,6 +724,7 @@ export default function App() {
                   value={emailInput}
                   onChange={(e) => setEmailInput(e.target.value)}
                   placeholder="E-mail"
+                  aria-label="E-mail"
                   required
                   autoFocus
                   autoComplete="email"
@@ -711,6 +739,7 @@ export default function App() {
                     value={passwordInput}
                     onChange={(e) => setPasswordInput(e.target.value)}
                     placeholder={isRegister ? 'Senha (mínimo 8 caracteres)' : 'Senha'}
+                    aria-label="Senha"
                     required
                     minLength={isRegister ? 8 : undefined}
                     autoComplete={isRegister ? 'new-password' : 'current-password'}
@@ -777,6 +806,9 @@ export default function App() {
           onClick={() => setShowAdmin(false)}
         >
           <div
+            role="dialog"
+            aria-modal="true"
+            aria-label="Administração de usuários"
             className="w-full max-w-[36rem] max-h-[85vh] flex flex-col glass-panel rounded-3xl p-lg space-y-md"
             onClick={(e) => e.stopPropagation()}
           >
@@ -824,13 +856,13 @@ export default function App() {
                         <button onClick={() => approveUser(u.id)} title="Aprovar" className="p-2 rounded-lg bg-primary-container/15 text-primary-container hover:bg-primary-container/25 transition-colors">
                           <Check className="w-4 h-4" />
                         </button>
-                        <button onClick={() => rejectUser(u.id)} title="Rejeitar" className="p-2 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors">
+                        <button onClick={() => rejectUser(u.id, u.email)} title="Rejeitar" className="p-2 rounded-lg bg-red-500/10 text-red-400 hover:bg-red-500/20 transition-colors">
                           <X className="w-4 h-4" />
                         </button>
                       </div>
                     ) : (
                       u.role !== 'admin' && (
-                        <button onClick={() => removeUser(u.id)} title="Remover usuário e seus dados" className="p-2 rounded-lg text-on-surface-variant hover:text-red-400 hover:bg-white/5 transition-colors shrink-0">
+                        <button onClick={() => removeUser(u.id, u.email)} title="Remover usuário e seus dados" className="p-2 rounded-lg text-on-surface-variant hover:text-red-400 hover:bg-white/5 transition-colors shrink-0">
                           <Trash2 className="w-4 h-4" />
                         </button>
                       )
@@ -850,6 +882,9 @@ export default function App() {
           onClick={() => setShowProfile(false)}
         >
           <form
+            role="dialog"
+            aria-modal="true"
+            aria-label="Meu perfil"
             onSubmit={handleSaveProfile}
             onClick={(e) => e.stopPropagation()}
             className="w-full max-w-[28rem] max-h-[88vh] overflow-y-auto no-scrollbar glass-panel rounded-3xl p-lg space-y-md"
@@ -996,6 +1031,17 @@ export default function App() {
               >
                 <Dumbbell className="w-5 h-5" />
                 Treinos
+              </button>
+              <button
+                onClick={() => setActiveTab('gerar')}
+                className={`w-full flex items-center gap-4 px-4 py-3 rounded-xl border font-medium transition-all ${
+                  activeTab === 'gerar'
+                    ? 'bg-[#CCFF00]/10 text-[#CCFF00] border-[#CCFF00]/20'
+                    : 'text-slate-400 border-transparent hover:bg-white/5 hover:text-white'
+                }`}
+              >
+                <Sparkles className="w-5 h-5" />
+                Treino Inteligente
               </button>
               <button
                 onClick={() => setActiveTab('historico')}
@@ -1164,6 +1210,25 @@ export default function App() {
                     </motion.div>
                   )}
 
+                  {activeTab === 'gerar' && (
+                    <motion.div
+                      key="gerar"
+                      initial={{ opacity: 0, y: 10 }}
+                      animate={{ opacity: 1, y: 0 }}
+                      exit={{ opacity: 0, y: -10 }}
+                      transition={{ duration: 0.2 }}
+                      className="w-full"
+                    >
+                      <WorkoutGeneratorView
+                        triggerToast={triggerToast}
+                        onSaved={async () => {
+                          await fetchData();
+                          setActiveTab('treino');
+                        }}
+                      />
+                    </motion.div>
+                  )}
+
                   {activeTab === 'historico' && user && (
                     <motion.div
                       key="historico"
@@ -1204,6 +1269,17 @@ export default function App() {
                 >
                   <Dumbbell className="w-5 h-5 mb-1" />
                   <span className="text-[10px] tracking-wide uppercase font-semibold">Treinos</span>
+                </button>
+
+                {/* Tab Gerar (Treino Inteligente) */}
+                <button
+                  onClick={() => setActiveTab('gerar')}
+                  className={`flex flex-col items-center justify-center w-16 h-16 rounded-xl transition-all ${
+                    activeTab === 'gerar' ? 'text-primary-container scale-110 font-bold' : 'text-on-surface-variant hover:text-white'
+                  }`}
+                >
+                  <Sparkles className="w-5 h-5 mb-1" />
+                  <span className="text-[10px] tracking-wide uppercase font-semibold">Gerar</span>
                 </button>
 
                 {/* Tab Historico */}

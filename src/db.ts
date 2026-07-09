@@ -1,6 +1,11 @@
 import crypto from 'crypto';
-import { Pool } from 'pg';
+import { promisify } from 'util';
+import { Pool, PoolClient } from 'pg';
 import { Exercise, Workout, WorkoutExercise, WorkoutLog, UserProfile } from './types';
+
+// scrypt assíncrono: não bloqueia o event loop (cada hash leva ~50-100ms; a
+// versão síncrona congelava TODAS as requisições durante login/registro/reset).
+const scryptAsync = promisify(crypto.scrypt) as (password: string, salt: string, keylen: number) => Promise<Buffer>;
 
 export type { Exercise, Workout, WorkoutExercise, WorkoutLog };
 
@@ -11,7 +16,11 @@ const RESET_TTL_MS = 60 * 60 * 1000;             // 1 hora (link de redefiniçã
 const DATABASE_URL = process.env.DATABASE_URL || '';
 const USE_SSL = !!DATABASE_URL && !/localhost|127\.0\.0\.1/.test(DATABASE_URL);
 
-// Bootstrap do primeiro administrador (definido no .env antes do primeiro start)
+const IS_PROD = process.env.NODE_ENV === 'production';
+
+// Bootstrap do primeiro administrador (definido no .env antes do primeiro start).
+// Em produção é PROIBIDO usar senha padrão — o boot deve falhar sem ADMIN_PASSWORD
+// (a verificação efetiva acontece em init(), garantindo que o processo recuse subir).
 const ADMIN_EMAIL = (process.env.ADMIN_EMAIL || 'admin@kinetic.local').toLowerCase().trim();
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'kinetic-admin';
 
@@ -119,7 +128,10 @@ export class Database {
   constructor() {
     this.pool = new Pool({
       connectionString: DATABASE_URL,
-      ssl: USE_SSL ? { rejectUnauthorized: false } : undefined,
+      // TLS com verificação de certificado (autentica o servidor, evita MITM).
+      // Neon suporta sslmode=verify-full; `ssl: true` usa a CA do sistema e mantém
+      // rejectUnauthorized=true (padrão do node-postgres).
+      ssl: USE_SSL ? true : undefined,
     });
   }
 
@@ -134,6 +146,10 @@ export class Database {
     if (!DATABASE_URL) {
       throw new Error('DATABASE_URL não definida. Configure a URL do Postgres (Neon) no .env.');
     }
+    // Em produção, recusa subir com a senha de admin padrão: exige ADMIN_PASSWORD.
+    if (IS_PROD && !process.env.ADMIN_PASSWORD) {
+      throw new Error('ADMIN_PASSWORD não definida. Em produção é obrigatório definir ADMIN_PASSWORD (não há senha padrão).');
+    }
     await this.createSchema();
     await this.createIndexes();
     const adminId = await this.ensureAdmin();
@@ -141,6 +157,14 @@ export class Database {
     if (firstRun) await this.seedDemoData(adminId);
     await this.pruneSessions();
     await this.prunePasswordResets();
+
+    // Limpeza periódica (a cada 6h) — processos de longa duração não acumulam
+    // sessões/resets expirados. unref() não impede o processo de encerrar.
+    const cleanup = setInterval(() => {
+      this.pruneSessions().catch(() => {});
+      this.prunePasswordResets().catch(() => {});
+    }, 6 * 60 * 60 * 1000);
+    cleanup.unref?.();
   }
 
   private async createSchema() {
@@ -268,8 +292,32 @@ export class Database {
   }
 
   // ---------------- Autenticação / Usuários ----------------
-  private hashPassword(password: string, salt: string): string {
-    return crypto.scryptSync(password, salt, 64).toString('hex');
+  private async hashPassword(password: string, salt: string): Promise<string> {
+    return (await scryptAsync(password, salt, 64)).toString('hex');
+  }
+
+  // Hash de tokens de sessão/redefinição para armazenar no banco. O token bruto
+  // vai para o cookie/link do usuário; no banco guardamos só o sha256 — assim um
+  // vazamento do banco não permite sequestrar sessões nem resets pendentes.
+  private hashToken(token: string): string {
+    return crypto.createHash('sha256').update(token).digest('hex');
+  }
+
+  // Executa uma função dentro de uma transação (BEGIN/COMMIT/ROLLBACK) com um
+  // client dedicado do pool. Em caso de erro, desfaz tudo.
+  private async withTransaction<T>(fn: (client: PoolClient) => Promise<T>): Promise<T> {
+    const client = await this.pool.connect();
+    try {
+      await client.query('BEGIN');
+      const result = await fn(client);
+      await client.query('COMMIT');
+      return result;
+    } catch (e) {
+      try { await client.query('ROLLBACK'); } catch { /* ignore */ }
+      throw e;
+    } finally {
+      client.release();
+    }
   }
 
   private rowToUser(row: any): User {
@@ -292,7 +340,7 @@ export class Database {
     await this.q(
       `INSERT INTO users (id, email, salt, password_hash, role, status, created_at)
        VALUES ($1,$2,$3,$4,'admin','approved',$5)`,
-      [id, ADMIN_EMAIL, salt, this.hashPassword(ADMIN_PASSWORD, salt), new Date().toISOString()]
+      [id, ADMIN_EMAIL, salt, await this.hashPassword(ADMIN_PASSWORD, salt), new Date().toISOString()]
     );
     await this.q(
       `INSERT INTO profiles (user_id, name, weight, height, body_fat) VALUES ($1,$2,0,0,0) ON CONFLICT (user_id) DO NOTHING`,
@@ -323,7 +371,7 @@ export class Database {
     const status = opts?.status ?? 'pending';
     await this.q(
       `INSERT INTO users (id, email, salt, password_hash, role, status, created_at) VALUES ($1,$2,$3,$4,$5,$6,$7)`,
-      [id, normalized, salt, this.hashPassword(password, salt), role, status, new Date().toISOString()]
+      [id, normalized, salt, await this.hashPassword(password, salt), role, status, new Date().toISOString()]
     );
     await this.q(
       `INSERT INTO profiles (user_id, name, weight, height, body_fat) VALUES ($1,$2,0,0,0) ON CONFLICT (user_id) DO NOTHING`,
@@ -345,7 +393,7 @@ export class Database {
   async verifyUserPassword(email: string, password: string): Promise<User | null> {
     const row = await this.getUserByEmail(email);
     if (!row) return null;
-    const attempt = Buffer.from(this.hashPassword(password, row.salt), 'hex');
+    const attempt = Buffer.from(await this.hashPassword(password, row.salt), 'hex');
     const stored = Buffer.from(row.password_hash, 'hex');
     if (attempt.length !== stored.length || !crypto.timingSafeEqual(attempt, stored)) return null;
     return this.rowToUser(row);
@@ -354,7 +402,7 @@ export class Database {
   async setUserPassword(userId: string, newPassword: string): Promise<boolean> {
     const salt = crypto.randomBytes(16).toString('hex');
     const r = await this.q(`UPDATE users SET salt = $1, password_hash = $2 WHERE id = $3`,
-      [salt, this.hashPassword(newPassword, salt), userId]);
+      [salt, await this.hashPassword(newPassword, salt), userId]);
     await this.q(`DELETE FROM sessions WHERE user_id = $1`, [userId]);
     return r.rowCount > 0;
   }
@@ -375,24 +423,28 @@ export class Database {
   async deleteUser(userId: string): Promise<boolean> {
     // workouts/exercises/logs não têm FK para users → apaga manualmente.
     // profiles/sessions/password_resets têm ON DELETE CASCADE ao remover o user.
-    await this.q(`DELETE FROM workout_logs WHERE user_id = $1`, [userId]);
-    await this.q(`DELETE FROM workout_exercises WHERE user_id = $1`, [userId]);
-    await this.q(`DELETE FROM workouts WHERE user_id = $1`, [userId]);
-    await this.q(`DELETE FROM exercises WHERE user_id = $1`, [userId]);
-    const r = await this.q(`DELETE FROM users WHERE id = $1`, [userId]);
-    return r.rowCount > 0;
+    // Tudo em uma transação: se algo falhar no meio, não deixa dados órfãos.
+    return this.withTransaction(async (client) => {
+      await client.query(`DELETE FROM workout_logs WHERE user_id = $1`, [userId]);
+      await client.query(`DELETE FROM workout_exercises WHERE user_id = $1`, [userId]);
+      await client.query(`DELETE FROM workouts WHERE user_id = $1`, [userId]);
+      await client.query(`DELETE FROM exercises WHERE user_id = $1`, [userId]);
+      const r = await client.query(`DELETE FROM users WHERE id = $1`, [userId]);
+      return (r.rowCount ?? 0) > 0;
+    });
   }
 
   // ---------------- Sessões ----------------
   async createSession(userId: string): Promise<SessionRecord> {
+    const rawToken = crypto.randomBytes(32).toString('hex');
     const session: SessionRecord = {
-      token: crypto.randomBytes(32).toString('hex'),
+      token: rawToken, // devolvido ao cliente (cookie); NÃO é o que fica no banco
       user_id: userId,
       created_at: new Date().toISOString(),
       expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString()
     };
     await this.q(`INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES ($1,$2,$3,$4)`,
-      [session.token, session.user_id, session.created_at, session.expires_at]);
+      [this.hashToken(rawToken), session.user_id, session.created_at, session.expires_at]);
     return session;
   }
 
@@ -402,14 +454,14 @@ export class Database {
       `SELECT u.id, u.email, u.role, u.status, u.created_at
        FROM sessions s JOIN users u ON u.id = s.user_id
        WHERE s.token = $1 AND s.expires_at > $2`,
-      [token, new Date().toISOString()]
+      [this.hashToken(token), new Date().toISOString()]
     )).rows[0];
     if (!row || row.status !== 'approved') return null;
     return this.rowToUser(row);
   }
 
   async deleteSession(token: string) {
-    await this.q(`DELETE FROM sessions WHERE token = $1`, [token]);
+    await this.q(`DELETE FROM sessions WHERE token = $1`, [this.hashToken(token)]);
   }
 
   private async pruneSessions() {
@@ -420,20 +472,23 @@ export class Database {
   async createPasswordReset(userId: string): Promise<string> {
     const token = crypto.randomBytes(32).toString('hex');
     const now = new Date();
+    // Invalida links anteriores do mesmo usuário: só o mais recente vale (M11).
+    await this.q(`DELETE FROM password_resets WHERE user_id = $1`, [userId]);
     await this.q(
       `INSERT INTO password_resets (token, user_id, created_at, expires_at, used) VALUES ($1,$2,$3,$4,0)`,
-      [token, userId, now.toISOString(), new Date(now.getTime() + RESET_TTL_MS).toISOString()]
+      [this.hashToken(token), userId, now.toISOString(), new Date(now.getTime() + RESET_TTL_MS).toISOString()]
     );
     return token;
   }
 
   async consumePasswordReset(token: string): Promise<string | null> {
+    const hashed = this.hashToken(token);
     const row = (await this.q(
       `SELECT user_id FROM password_resets WHERE token = $1 AND used = 0 AND expires_at > $2`,
-      [token, new Date().toISOString()]
+      [hashed, new Date().toISOString()]
     )).rows[0];
     if (!row) return null;
-    await this.q(`UPDATE password_resets SET used = 1 WHERE token = $1`, [token]);
+    await this.q(`UPDATE password_resets SET used = 1 WHERE token = $1`, [hashed]);
     return row.user_id;
   }
 
@@ -473,8 +528,14 @@ export class Database {
     if (!ex) return undefined;
     const merged = { ...ex, ...updates };
     await this.q(
-      `UPDATE exercises SET name_pt = $1, name_en = $2, muscle_group = $3, description_pt = $4, description_en = $5 WHERE id = $6 AND user_id = $7`,
-      [merged.name_pt, merged.name_en, merged.muscle_group, merged.description_pt, merged.description_en, id, userId]
+      `UPDATE exercises SET name_pt = $1, name_en = $2, muscle_group = $3, description_pt = $4, description_en = $5,
+              image_muscle = $6, image_equipment = $7, image_demo = $8, video_url = $9
+       WHERE id = $10 AND user_id = $11`,
+      [
+        merged.name_pt, merged.name_en, merged.muscle_group, merged.description_pt, merged.description_en,
+        merged.image_muscle ?? '', merged.image_equipment ?? '', merged.image_demo ?? '', merged.video_url ?? '',
+        id, userId,
+      ]
     );
     return merged;
   }
@@ -538,6 +599,61 @@ export class Database {
 
   async deleteWorkoutExercise(userId: string, id: string): Promise<boolean> {
     return (await this.q(`DELETE FROM workout_exercises WHERE id = $1 AND user_id = $2`, [id, userId])).rowCount > 0;
+  }
+
+  // ---------------- Treinos gerados (motor inteligente) ----------------
+
+  // Garante que um exercício da base curada exista na biblioteca do usuário.
+  // Usa um id estável (gen-<userId>-<slug>) para ser idempotente entre gerações.
+  async ensureGeneratedExercise(
+    userId: string,
+    e: { slug: string; nome: string; name_en: string; grupoMuscular: string }
+  ): Promise<string> {
+    const id = `gen-${userId}-${e.slug}`;
+    await this.q(
+      `INSERT INTO exercises (id, user_id, name_pt, name_en, muscle_group, description_pt, description_en, image_muscle, image_equipment, image_demo, video_url, created_at)
+       VALUES ($1,$2,$3,$4,$5,$6,$7,'','','','',$8) ON CONFLICT (id) DO NOTHING`,
+      [id, userId, e.nome, e.name_en, e.grupoMuscular, 'Exercício gerado automaticamente pelo motor de treinos.', e.name_en, new Date().toISOString()]
+    );
+    return id;
+  }
+
+  // Persiste um plano gerado: cria um treino por dia + os exercícios vinculados.
+  async createGeneratedPlan(
+    userId: string,
+    days: Array<{
+      nome: string;
+      exercicios: Array<{
+        slug: string; nome: string; name_en: string; grupoMuscular: string;
+        series: number; repeticoes: string; descanso: string;
+      }>;
+    }>
+  ): Promise<Workout[]> {
+    // Tudo em uma transação: um plano ou é criado por inteiro ou não é criado —
+    // nunca metade dos treinos/exercícios (evita rotinas pela metade no banco).
+    return this.withTransaction(async (client) => {
+      const created: Workout[] = [];
+      const now = new Date().toISOString();
+      for (const day of days) {
+        const workout: Workout = { id: 'w-' + generateId(), name: day.nome, user_id: userId, created_at: now };
+        await client.query(`INSERT INTO workouts (id, name, user_id, created_at) VALUES ($1,$2,$3,$4)`,
+          [workout.id, workout.name, workout.user_id, workout.created_at]);
+        for (const ex of day.exercicios) {
+          const exerciseId = `gen-${userId}-${ex.slug}`;
+          await client.query(
+            `INSERT INTO exercises (id, user_id, name_pt, name_en, muscle_group, description_pt, description_en, image_muscle, image_equipment, image_demo, video_url, created_at)
+             VALUES ($1,$2,$3,$4,$5,$6,$7,'','','','',$8) ON CONFLICT (id) DO NOTHING`,
+            [exerciseId, userId, ex.nome, ex.name_en, ex.grupoMuscular, 'Exercício gerado automaticamente pelo motor de treinos.', ex.name_en, now]
+          );
+          await client.query(
+            `INSERT INTO workout_exercises (id, user_id, workout_id, exercise_id, series, repetitions, rest_time, weight) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+            ['we-' + generateId(), userId, workout.id, exerciseId, ex.series, ex.repeticoes, ex.descanso, 0]
+          );
+        }
+        created.push(workout);
+      }
+      return created;
+    });
   }
 
   // ---------------- Workout Logs (por usuário) ----------------

@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { WorkoutLog, UserProfile } from '../types';
-import { Award, Dumbbell, Calendar, Clock, Flame, ChevronDown, ChevronUp, ChevronRight, Activity } from 'lucide-react';
+import { Award, Dumbbell, Calendar, Clock, Flame, ChevronUp, ChevronRight, Activity } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 interface HistoryViewProps {
@@ -14,6 +14,19 @@ export default function HistoryView({ logs, user }: HistoryViewProps) {
   const toggleExpand = (id: string) => {
     setExpandedLogId(expandedLogId === id ? null : id);
   };
+
+  // Métricas reais dos últimos 30 dias (a partir dos logs — nada hardcoded).
+  const now = new Date();
+  const monthAgo = new Date(now.getTime() - 30 * 24 * 60 * 60 * 1000);
+  const logDate = (l: WorkoutLog) => {
+    const d = new Date(`${l.date}T00:00:00`);
+    return isNaN(d.getTime()) ? new Date(l.created_at) : d;
+  };
+  const recentLogs = logs.filter((l) => logDate(l) >= monthAgo);
+  const monthWorkouts = recentLogs.length;
+  const monthMinutes = recentLogs.reduce((s, l) => s + (l.duration || 0), 0);
+  const monthCalories = recentLogs.reduce((s, l) => s + (l.calories || 0), 0);
+  const totalWorkouts = logs.length;
 
   // Format historical date indicators beautifully
   const getDayDetails = (log: WorkoutLog) => {
@@ -59,85 +72,69 @@ export default function HistoryView({ logs, user }: HistoryViewProps) {
 
       {/* Bento Grid Layout */}
       <div className="grid grid-cols-1 md:grid-cols-12 gap-gutter">
-        {/* Trend Chart Card */}
-        <div className="md:col-span-8 glass-panel rounded-2xl p-md flex flex-col gap-sm overflow-hidden relative group">
-          <div className="flex justify-between items-center z-10">
+        {/* Resumo real dos últimos 30 dias (derivado dos logs) */}
+        <div className="md:col-span-8 glass-panel rounded-2xl p-md flex flex-col gap-md overflow-hidden relative">
+          <div className="flex justify-between items-center">
             <div>
               <p className="text-label-md text-on-surface-variant font-bold uppercase tracking-widest">
-                Tendência de Massa Muscular
+                Resumo dos últimos 30 dias
               </p>
               <h2 className="text-data-lg font-black text-primary-container tracking-tight">
-                {user.weight.toFixed(1)} <span className="text-label-md font-semibold text-on-surface-variant">kg</span>
+                {monthWorkouts} <span className="text-label-md font-semibold text-on-surface-variant">{monthWorkouts === 1 ? 'treino' : 'treinos'}</span>
               </h2>
             </div>
-            <div className="flex gap-xs">
-              <span className="bg-primary-container/10 border border-primary-container/20 text-primary-container text-[11px] px-3 py-1 rounded-full font-bold">
-                +1.2% este mês
-              </span>
+            <div className="w-12 h-12 rounded-xl bg-primary-container/10 border border-primary-container/20 flex items-center justify-center text-primary-container">
+              <Activity className="w-6 h-6" />
             </div>
           </div>
 
-          {/* Simplified Vector Chart Representation */}
-          <div className="w-full h-44 mt-sm relative pointer-events-none">
-            <svg className="w-full h-full drop-shadow-[0_0_8px_rgba(204,255,0,0.4)]" viewBox="0 0 400 150">
-              <defs>
-                <linearGradient id="chartGradient" x1="0" x2="0" y1="0" y2="1">
-                  <stop offset="0%" stopColor="#CCFF00" stopOpacity="0.3"></stop>
-                  <stop offset="100%" stopColor="#CCFF00" stopOpacity="0"></stop>
-                </linearGradient>
-              </defs>
-              <path 
-                d="M0,130 C50,121 80,138 120,112 C160,82 200,91 250,62 C300,32 350,44 400,20 L400,150 L0,150 Z" 
-                fill="url(#chartGradient)"
-              />
-              <path 
-                d="M0,130 C50,121 80,138 120,112 C160,82 200,91 250,62 C300,32 350,44 400,20" 
-                fill="none" 
-                stroke="#CCFF00" 
-                strokeLinecap="round" 
-                strokeWidth="3.5"
-              />
-              <circle cx="400" cy="20" fill="#CCFF00" r="5"></circle>
-            </svg>
-            <div className="absolute bottom-0 left-0 w-full flex justify-between text-[11px] text-on-surface-variant font-bold uppercase pt-2 px-1">
-              <span>S1</span>
-              <span>S2</span>
-              <span>S3</span>
-              <span>S4</span>
+          <div className="grid grid-cols-2 gap-gutter">
+            <div className="bg-[#0F1115] border border-white/5 rounded-xl p-md">
+              <div className="flex items-center gap-1.5 text-on-surface-variant">
+                <Clock className="w-4 h-4 text-primary-container" />
+                <span className="text-[11px] font-bold uppercase tracking-wider">Minutos ativos</span>
+              </div>
+              <p className="text-headline-md font-black text-white mt-1">{monthMinutes}</p>
+            </div>
+            <div className="bg-[#0F1115] border border-white/5 rounded-xl p-md">
+              <div className="flex items-center gap-1.5 text-on-surface-variant">
+                <Flame className="w-4 h-4 text-primary-container" />
+                <span className="text-[11px] font-bold uppercase tracking-wider">Calorias</span>
+              </div>
+              <p className="text-headline-md font-black text-white mt-1">{monthCalories}</p>
             </div>
           </div>
         </div>
 
-        {/* Achievement Section (Trophies) */}
-        <div className="md:col-span-4 glass-panel rounded-2xl p-md flex flex-col justify-between">
-          <div>
-            <p className="text-label-md text-on-surface-variant font-bold uppercase tracking-widest mb-sm">
-              Conquistas
-            </p>
-            <div className="flex flex-col gap-md mt-xs">
-              <div className="flex items-center gap-sm">
-                <div className="w-12 h-12 rounded-full bg-primary-container/10 border border-primary-container/20 flex items-center justify-center animate-pulse">
-                  <Award className="w-6 h-6 text-primary-container" />
-                </div>
-                <div>
-                  <p className="text-body-md font-bold text-white">Sequência de 5 Dias</p>
-                  <p className="text-xs text-on-surface-variant font-medium">Constância é tudo</p>
-                </div>
+        {/* Conquistas — condicionais aos dados reais */}
+        <div className="md:col-span-4 glass-panel rounded-2xl p-md flex flex-col">
+          <p className="text-label-md text-on-surface-variant font-bold uppercase tracking-widest mb-sm">
+            Conquistas
+          </p>
+          <div className="flex flex-col gap-md mt-xs">
+            <div className={`flex items-center gap-sm ${user.streak >= 5 ? '' : 'opacity-50'}`}>
+              <div className={`w-12 h-12 rounded-full flex items-center justify-center ${user.streak >= 5 ? 'bg-primary-container/10 border border-primary-container/20' : 'bg-[#201f1f] border border-white/5'}`}>
+                <Award className={`w-6 h-6 ${user.streak >= 5 ? 'text-primary-container' : 'text-on-surface-variant'}`} />
               </div>
-              <div className="flex items-center gap-sm opacity-50">
-                <div className="w-12 h-12 rounded-full bg-[#201f1f] border border-white/5 flex items-center justify-center">
-                  <Dumbbell className="w-6 h-6 text-on-surface-variant" />
-                </div>
-                <div>
-                  <p className="text-body-md font-bold text-white">Powerhouse</p>
-                  <p className="text-xs text-on-surface-variant font-medium">Bateu 100kg no Supino</p>
-                </div>
+              <div>
+                <p className="text-body-md font-bold text-white">Sequência de 5 Dias</p>
+                <p className="text-xs text-on-surface-variant font-medium">
+                  {user.streak >= 5 ? 'Conquistada!' : `Faltam ${5 - user.streak} ${5 - user.streak === 1 ? 'dia' : 'dias'}`}
+                </p>
+              </div>
+            </div>
+            <div className={`flex items-center gap-sm ${totalWorkouts >= 10 ? '' : 'opacity-50'}`}>
+              <div className={`w-12 h-12 rounded-full flex items-center justify-center ${totalWorkouts >= 10 ? 'bg-primary-container/10 border border-primary-container/20' : 'bg-[#201f1f] border border-white/5'}`}>
+                <Dumbbell className={`w-6 h-6 ${totalWorkouts >= 10 ? 'text-primary-container' : 'text-on-surface-variant'}`} />
+              </div>
+              <div>
+                <p className="text-body-md font-bold text-white">Dedicação (10 treinos)</p>
+                <p className="text-xs text-on-surface-variant font-medium">
+                  {totalWorkouts >= 10 ? 'Conquistada!' : `${totalWorkouts}/10 treinos registrados`}
+                </p>
               </div>
             </div>
           </div>
-          <button className="mt-md w-full py-2.5 text-label-md font-bold text-primary-container hover:bg-primary-container/5 rounded-xl border border-primary-container/10 transition-colors">
-            Ver Todos os Troféus
-          </button>
         </div>
 
         {/* Workout History List */}
