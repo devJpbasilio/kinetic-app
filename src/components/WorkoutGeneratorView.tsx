@@ -1,11 +1,12 @@
 import React, { useState } from 'react';
-import { Sparkles, Dumbbell, Clock, Calendar, MapPin, Target, TrendingUp, ChevronDown, ChevronRight, RefreshCw, Check, AlertCircle, Save, ArrowLeft, Flame } from 'lucide-react';
+import { Zap, Dumbbell, Clock, Calendar, MapPin, Target, TrendingUp, ChevronDown, ChevronRight, RefreshCw, Check, AlertCircle, Save, Flame, User } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 // Tipos leves (espelham o motor no servidor) — o componente só envia
 // preferências e renderiza o plano retornado pela API.
 type Nivel = 'iniciante' | 'intermediario' | 'avancado';
 type Objetivo = 'hipertrofia' | 'emagrecimento';
+type Genero = 'masculino' | 'feminino';
 type Local = 'academia_completa' | 'academia_basica' | 'casa';
 type Equipamento = 'Barra' | 'Halteres' | 'Máquina' | 'Cabo' | 'Peso Corporal' | 'Elástico' | 'Kettlebell';
 type Regiao = 'peito' | 'costas' | 'ombro' | 'biceps' | 'triceps' | 'quadriceps' | 'posterior' | 'gluteo' | 'panturrilha' | 'abdomen' | 'trapezio';
@@ -33,6 +34,10 @@ const NIVEIS: { v: Nivel; label: string; desc: string }[] = [
   { v: 'iniciante', label: 'Iniciante', desc: 'Até ~6 meses de treino' },
   { v: 'intermediario', label: 'Intermediário', desc: '6 meses a 2 anos' },
   { v: 'avancado', label: 'Avançado', desc: 'Mais de 2 anos' },
+];
+const GENEROS: { v: Genero; label: string; desc: string }[] = [
+  { v: 'masculino', label: 'Homem', desc: 'Mais ênfase em membros superiores' },
+  { v: 'feminino', label: 'Mulher', desc: 'Mais ênfase em glúteos e pernas' },
 ];
 const LOCAIS: { v: Local; label: string; desc: string }[] = [
   { v: 'academia_completa', label: 'Academia completa', desc: 'Máquinas, cabos, pesos livres' },
@@ -87,6 +92,7 @@ const Chip: React.FC<{ active: boolean; onClick: () => void; label: string; }> =
 
 export default function WorkoutGeneratorView({ onSaved, triggerToast }: Props) {
   const [objetivo, setObjetivo] = useState<Objetivo>('hipertrofia');
+  const [genero, setGenero] = useState<Genero>('masculino');
   const [nivel, setNivel] = useState<Nivel>('iniciante');
   const [dias, setDias] = useState(3);
   const [tempo, setTempo] = useState<(typeof TEMPOS)[number]>(60);
@@ -96,6 +102,9 @@ export default function WorkoutGeneratorView({ onSaved, triggerToast }: Props) {
   const [showAdvanced, setShowAdvanced] = useState(false);
 
   const [plan, setPlan] = useState<GenPlan | null>(null);
+  // Semente da geração atual: muda a cada prévia (para "Gerar novamente" variar)
+  // e é reaproveitada no salvar, garantindo que o salvo == o que foi visto.
+  const [seed, setSeed] = useState(() => Math.floor(Math.random() * 1e9));
   const [loading, setLoading] = useState(false);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -103,18 +112,20 @@ export default function WorkoutGeneratorView({ onSaved, triggerToast }: Props) {
   const toggle = <T,>(list: T[], v: T, set: (l: T[]) => void) =>
     set(list.includes(v) ? list.filter((x) => x !== v) : [...list, v]);
 
-  const buildBody = (persist: boolean) => ({
-    objetivo, nivel, dias, tempo, local,
-    equipamentos, restricoes, persist,
+  const buildBody = (persist: boolean, seedVal: number) => ({
+    objetivo, genero, nivel, dias, tempo, local,
+    equipamentos, restricoes, seed: seedVal, persist,
   });
 
   const generatePreview = async () => {
+    const nextSeed = Math.floor(Math.random() * 1e9);
+    setSeed(nextSeed);
     setLoading(true); setError(null); setPlan(null);
     try {
       const res = await fetch('/api/workouts/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(buildBody(false)),
+        body: JSON.stringify(buildBody(false, nextSeed)),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Falha ao gerar o treino.');
@@ -132,7 +143,7 @@ export default function WorkoutGeneratorView({ onSaved, triggerToast }: Props) {
       const res = await fetch('/api/workouts/generate', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(buildBody(true)),
+        body: JSON.stringify(buildBody(true, seed)),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || 'Falha ao salvar os treinos.');
@@ -155,7 +166,7 @@ export default function WorkoutGeneratorView({ onSaved, triggerToast }: Props) {
     >
       <section className="space-y-xs">
         <div className="flex items-center gap-2">
-          <Sparkles className="w-6 h-6 text-primary-container" />
+          <Zap className="w-6 h-6 text-primary-container" />
           <h1 className="text-headline-lg-mobile md:text-headline-lg font-extrabold tracking-tight text-white uppercase">
             Treino Inteligente
           </h1>
@@ -173,6 +184,18 @@ export default function WorkoutGeneratorView({ onSaved, triggerToast }: Props) {
         <div className="grid grid-cols-1 sm:grid-cols-2 gap-sm">
           {OBJETIVOS.map((o) => (
             <OptionCard key={o.v} active={objetivo === o.v} onClick={() => setObjetivo(o.v)} title={o.label} subtitle={o.desc} icon={o.icon} />
+          ))}
+        </div>
+      </div>
+
+      {/* Sexo */}
+      <div className="space-y-sm">
+        <label className="flex items-center gap-2 text-label-md text-on-surface-variant font-bold uppercase">
+          <User className="w-4 h-4" /> Sexo
+        </label>
+        <div className="grid grid-cols-1 sm:grid-cols-2 gap-sm">
+          {GENEROS.map((g) => (
+            <OptionCard key={g.v} active={genero === g.v} onClick={() => setGenero(g.v)} title={g.label} subtitle={g.desc} />
           ))}
         </div>
       </div>
@@ -279,7 +302,7 @@ export default function WorkoutGeneratorView({ onSaved, triggerToast }: Props) {
         disabled={loading}
         className="w-full bg-primary-container text-on-primary font-bold py-4 rounded-2xl flex items-center justify-center gap-2 hover:brightness-110 active:scale-98 transition-all shadow-lg shadow-primary-container/20 disabled:opacity-60"
       >
-        {loading ? <RefreshCw className="w-5 h-5 animate-spin" /> : <Sparkles className="w-5 h-5" />}
+        {loading ? <RefreshCw className="w-5 h-5 animate-spin" /> : <Zap className="w-5 h-5" />}
         {loading ? 'Gerando...' : plan ? 'Gerar novamente' : 'Gerar treino'}
       </button>
 
@@ -342,7 +365,7 @@ export default function WorkoutGeneratorView({ onSaved, triggerToast }: Props) {
             </div>
 
             <p className="text-xs text-on-surface-variant text-center">
-              Ao salvar, cada treino vira uma rotina editável na aba Treinos.
+              Ao salvar, cada treino vira uma rotina editável na aba Treinos. Salvar substitui os treinos gerados anteriormente (os criados manualmente não são afetados).
             </p>
           </motion.div>
         )}

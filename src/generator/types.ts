@@ -4,6 +4,7 @@
 
 export type Nivel = 'iniciante' | 'intermediario' | 'avancado';
 export type Objetivo = 'hipertrofia' | 'emagrecimento';
+export type Genero = 'masculino' | 'feminino';
 export type Local = 'academia_completa' | 'academia_basica' | 'casa';
 
 // Equipamentos normalizados usados na base curada e no filtro do usuário.
@@ -55,6 +56,8 @@ export interface GeneratorPreferences {
   restricoes?: Regiao[];         // regiões a evitar (lesões)
   excluir?: string[];            // slugs de exercícios proibidos
   preferencias?: Equipamento[];  // equipamentos favoritos (priorizados)
+  seed?: number;                 // varia a seleção entre gerações (mesmo perfil)
+  genero?: Genero;               // ajusta a ênfase de volume por grupo muscular
 }
 
 export interface GeneratedExercise {
@@ -80,6 +83,7 @@ export interface GeneratedPlan {
   divisao: string;        // ex.: "Push Pull Legs", "ABC", "Full Body"
   objetivo: Objetivo;
   nivel: Nivel;
+  genero?: Genero;
   dias: number;
   tempoPorTreino: number;
   treinos: GeneratedDay[];

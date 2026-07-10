@@ -799,6 +799,8 @@ ${rawText}`;
         restricoes: filterArr(b.restricoes, REGIOES) as Regiao[],
         preferencias: filterArr(b.preferencias, EQUIPS) as Equipamento[],
         excluir: Array.isArray(b.excluir) ? b.excluir.map(String) : [],
+        seed: Number.isFinite(Number(b.seed)) ? Math.abs(Math.trunc(Number(b.seed))) : 0,
+        genero: (b.genero === 'masculino' || b.genero === 'feminino') ? b.genero : undefined,
       };
 
       const plan = generatePlan(prefs);
@@ -820,6 +822,7 @@ ${rawText}`;
       const days = plan.treinos.map((day) => {
         return {
           nome: day.nome,
+          cardio: day.cardio,
           exercicios: day.exercicios.map((ex) => {
             const c = CURATED_BY_SLUG[ex.slug];
             return {

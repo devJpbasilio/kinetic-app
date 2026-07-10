@@ -5,7 +5,7 @@ import WorkoutSetupView from './components/WorkoutSetupView';
 import WorkoutGeneratorView from './components/WorkoutGeneratorView';
 import HistoryView from './components/HistoryView';
 import ActiveWorkoutView from './components/ActiveWorkoutView';
-import { Home, Dumbbell, Calendar, Sparkles, User, RefreshCw, AlertCircle, LogOut, Lock, Mail, Users, Check, X, Trash2, ShieldCheck, Clock } from 'lucide-react';
+import { Home, Dumbbell, Calendar, Sparkles, Zap, User, RefreshCw, AlertCircle, LogOut, Lock, Mail, Users, Check, X, Trash2, ShieldCheck, Clock } from 'lucide-react';
 import { motion, AnimatePresence } from 'motion/react';
 
 export default function App() {
@@ -1040,7 +1040,7 @@ export default function App() {
                     : 'text-slate-400 border-transparent hover:bg-white/5 hover:text-white'
                 }`}
               >
-                <Sparkles className="w-5 h-5" />
+                <Zap className="w-5 h-5" />
                 Treino Inteligente
               </button>
               <button
@@ -1278,7 +1278,7 @@ export default function App() {
                     activeTab === 'gerar' ? 'text-primary-container scale-110 font-bold' : 'text-on-surface-variant hover:text-white'
                   }`}
                 >
-                  <Sparkles className="w-5 h-5 mb-1" />
+                  <Zap className="w-5 h-5 mb-1" />
                   <span className="text-[10px] tracking-wide uppercase font-semibold">Gerar</span>
                 </button>
 

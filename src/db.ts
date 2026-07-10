@@ -619,10 +619,14 @@ export class Database {
   }
 
   // Persiste um plano gerado: cria um treino por dia + os exercícios vinculados.
+  // Os treinos gerados recebem id com prefixo "genw-"; ao salvar um novo plano,
+  // os gerados anteriormente são substituídos (evita acúmulo de duplicatas).
+  // Treinos criados manualmente pelo usuário (id "w-") nunca são tocados.
   async createGeneratedPlan(
     userId: string,
     days: Array<{
       nome: string;
+      cardio?: string;
       exercicios: Array<{
         slug: string; nome: string; name_en: string; grupoMuscular: string;
         series: number; repeticoes: string; descanso: string;
@@ -632,10 +636,13 @@ export class Database {
     // Tudo em uma transação: um plano ou é criado por inteiro ou não é criado —
     // nunca metade dos treinos/exercícios (evita rotinas pela metade no banco).
     return this.withTransaction(async (client) => {
+      // Substitui os treinos gerados anteriormente (o CASCADE remove os vínculos).
+      await client.query(`DELETE FROM workouts WHERE user_id = $1 AND id LIKE 'genw-%'`, [userId]);
+
       const created: Workout[] = [];
       const now = new Date().toISOString();
       for (const day of days) {
-        const workout: Workout = { id: 'w-' + generateId(), name: day.nome, user_id: userId, created_at: now };
+        const workout: Workout = { id: 'genw-' + generateId(), name: day.nome, user_id: userId, created_at: now };
         await client.query(`INSERT INTO workouts (id, name, user_id, created_at) VALUES ($1,$2,$3,$4)`,
           [workout.id, workout.name, workout.user_id, workout.created_at]);
         for (const ex of day.exercicios) {
@@ -648,6 +655,19 @@ export class Database {
           await client.query(
             `INSERT INTO workout_exercises (id, user_id, workout_id, exercise_id, series, repetitions, rest_time, weight) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
             ['we-' + generateId(), userId, workout.id, exerciseId, ex.series, ex.repeticoes, ex.descanso, 0]
+          );
+        }
+        // Cardio/HIIT do dia vira um "exercício" ao final do treino (não se perde).
+        if (day.cardio) {
+          const cardioId = `gen-${userId}-cardio`;
+          await client.query(
+            `INSERT INTO exercises (id, user_id, name_pt, name_en, muscle_group, description_pt, description_en, image_muscle, image_equipment, image_demo, video_url, created_at)
+             VALUES ($1,$2,'Cardio / HIIT','Cardio','Cardio','Sessão de cardio prescrita pelo motor de treinos.','Cardio','','','','',$3) ON CONFLICT (id) DO NOTHING`,
+            [cardioId, userId, now]
+          );
+          await client.query(
+            `INSERT INTO workout_exercises (id, user_id, workout_id, exercise_id, series, repetitions, rest_time, weight) VALUES ($1,$2,$3,$4,$5,$6,$7,$8)`,
+            ['we-' + generateId(), userId, workout.id, cardioId, 1, day.cardio, '—', 0]
           );
         }
         created.push(workout);

@@ -4,7 +4,7 @@
 // das divisões (splits) conforme tempo, nível, objetivo e restrições.
 
 import {
-  CuratedExercise, GeneratorPreferences, GeneratedPlan, GeneratedDay, GeneratedExercise, Nivel, Objetivo,
+  CuratedExercise, GeneratorPreferences, GeneratedPlan, GeneratedDay, GeneratedExercise, Nivel, Objetivo, Genero, Regiao,
 } from './types';
 import { CURATED_EXERCISES } from './exercises';
 import { chooseSplit, DayBlueprint, Slot } from './splits';
@@ -63,6 +63,29 @@ function matchPapel(e: CuratedExercise, slot: Slot): boolean {
   return !e.composto;
 }
 
+// Regiões enfatizadas por gênero (para distribuir o volume).
+function emphasisRegions(genero?: Genero): Regiao[] {
+  if (genero === 'feminino') return ['gluteo', 'posterior', 'quadriceps', 'panturrilha'];
+  if (genero === 'masculino') return ['peito', 'costas', 'ombro', 'biceps', 'triceps'];
+  return [];
+}
+
+// Reordena os slots por ênfase de gênero SEM tocar nos movimentos principais:
+// compostos (e "any") ficam no início. Entre os isolados, os grupos enfatizados
+// vêm primeiro e ganham um slot extra; os não enfatizados vão para o fim — logo
+// são os primeiros a serem cortados quando o tempo limita o nº de exercícios.
+// Resultado: mesma base de exercícios, volume redistribuído conforme o gênero.
+function orderSlotsByEmphasis(slots: Slot[], genero?: Genero): Slot[] {
+  const emph = emphasisRegions(genero);
+  if (!emph.length) return slots;
+  const principais = slots.filter((s) => s.papel !== 'isolado');
+  const isolados = slots.filter((s) => s.papel === 'isolado');
+  const favoritos = isolados.filter((s) => emph.includes(s.regiao));
+  const outros = isolados.filter((s) => !emph.includes(s.regiao));
+  const extra: Slot[] = favoritos.length ? [{ regiao: favoritos[0].regiao, papel: 'isolado' }] : [];
+  return [...principais, ...favoritos, ...extra, ...outros];
+}
+
 // Escolhe um candidato priorizando os equipamentos favoritos; usa rotação
 // determinística para variar exercícios entre dias que repetem a mesma região.
 function pick(cands: CuratedExercise[], preferencias: string[] | undefined, rot: number): CuratedExercise {
@@ -101,14 +124,15 @@ function buildDay(
     out.push(toGenerated(e, prefs));
   };
 
-  blueprint.slots.forEach((slot, slotIndex) => {
+  const slots = orderSlotsByEmphasis(blueprint.slots, prefs.genero);
+  slots.forEach((slot, slotIndex) => {
     if (out.length >= max) return;
     // 1) candidatos exatos (região + papel)
     let cands = pool.filter((e) => e.regiao === slot.regiao && matchPapel(e, slot) && !used.has(e.slug));
     // 2) relaxa o papel se necessário
     if (!cands.length) cands = pool.filter((e) => e.regiao === slot.regiao && !used.has(e.slug));
     if (!cands.length) return;
-    take(pick(cands, prefs.preferencias, dayIndex * 7 + slotIndex));
+    take(pick(cands, prefs.preferencias, dayIndex * 7 + slotIndex + (prefs.seed ?? 0)));
   });
 
   // Fallback: se o dia ficou curto (ex.: treino em casa), completa APENAS com
@@ -141,6 +165,10 @@ export function generatePlan(prefs: GeneratorPreferences): GeneratedPlan {
     const blueprint = split.ciclo[i % split.ciclo.length];
     const exercicios = buildDay(blueprint, pool, prefs, i, max);
 
+    // Restrições podem esvaziar o foco de um dia (ex.: dia de pernas com todas
+    // as regiões de perna barradas). Nesse caso o dia é omitido do plano.
+    if (exercicios.length === 0) continue;
+
     // Desambigua rótulos repetidos (ex.: dois "Push" no PPL de 6 dias).
     rotuloCount[blueprint.rotulo] = (rotuloCount[blueprint.rotulo] ?? 0) + 1;
     const suffix = rotuloCount[blueprint.rotulo] > 1 ? ` ${rotuloCount[blueprint.rotulo]}` : '';
@@ -154,12 +182,14 @@ export function generatePlan(prefs: GeneratorPreferences): GeneratedPlan {
 
   const objLabel = prefs.objetivo === 'hipertrofia' ? 'Hipertrofia' : 'Emagrecimento';
   const nivelLabel = prefs.nivel === 'iniciante' ? 'Iniciante' : prefs.nivel === 'intermediario' ? 'Intermediário' : 'Avançado';
+  const generoLabel = prefs.genero === 'feminino' ? 'Feminino' : prefs.genero === 'masculino' ? 'Masculino' : '';
 
   return {
-    titulo: `${split.divisao} · ${objLabel} · ${nivelLabel}`,
+    titulo: [split.divisao, objLabel, nivelLabel, generoLabel].filter(Boolean).join(' · '),
     divisao: split.divisao,
     objetivo: prefs.objetivo,
     nivel: prefs.nivel,
+    genero: prefs.genero,
     dias,
     tempoPorTreino: prefs.tempo,
     treinos,
