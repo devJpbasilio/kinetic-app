@@ -1,5 +1,34 @@
 # Auditoria Completa — Kinetic
 
+> ## 🔄 Reauditoria e correções (2026-07-12)
+>
+> Nova revisão independente de todo o código (estado atual). A base permaneceu
+> **sólida e sem falhas críticas**; os achados foram de dependência, configuração
+> operacional e defesa em profundidade. **Score atribuído: 82/100** ("bom/maduro").
+>
+> **Corrigido no código (commits `c0d43ca`, `f3c5569`, `22181ed`):**
+>
+> - **[ALTO] Dependência vulnerável** — `nodemailer` `^6.9.16 → ^9.0.3` (resolvia 1 CVE *high*: SMTP command injection / SSRF / DoS via addressparser). `npm audit` agora reporta **0 vulnerabilidades**. Adicionado script `npm run audit` (falha em CVE ≥ high) para o CI. *(A06)*
+> - **[MÉDIO] Brute-force / credential stuffing** — **lockout por conta persistido no Postgres** (tabela `login_attempts`), com backoff exponencial (5 falhas → 30s, 60s, 120s … teto 30min). Persistir no banco faz o bloqueio **sobreviver ao cold start do Render Free** e valer **entre instâncias** — o rate limiter em memória (por IP) não faz nenhuma das duas coisas. `checkLoginLockout` responde **429 + `Retry-After`** antes de verificar a senha; credenciais válidas zeram o contador. *(A07 / CWE-307)*
+> - **[MÉDIO] Logging & Monitoramento** — **log de auditoria estruturado** (`src/audit.ts`): 1 linha JSON por evento no stdout (coletável por Log Stream do Render). Cobre login (success/failure/locked/denied_pending), register, logout, reset/troca de senha e ações de admin (approve/reject/delete). Registra `userId`/`email`/`ip` e desfecho — **nunca** senhas, tokens ou hashes. *(A09 / CWE-778)*
+> - **[MÉDIO] Sessão longa fixa** — **TTL configurável**: sem "manter conectado" → sessão curta de **12h** (padrão seguro); com o checkbox → **30 dias** (agora opt-in). `createSession(userId, ttlMs?)` grava `expires_at` coerente com o `Max-Age` do cookie. Checkbox adicionado à tela de login. *(A07 / CWE-613)*
+> - **[BAIXO] XSS via `javascript:` em `href`** — `video_url` sanitizado na origem por `safeExternalUrl()` em `mapCatalogToExercise` (só aceita `http(s)`/relativo próprio), antes de ser renderizado como `href`. *(A03 / CWE-79)*
+> - **[BAIXO] Exposição de código** — removido `--sourcemap` do build de produção do servidor (sem `dist/server.cjs.map`). *(A05 / CWE-540)*
+> - **[BAIXO] Prompt injection** — input do usuário no `translate-import` agora é cercado por marcadores `<<<DADOS>>>` e tratado como dados, não instruções. *(A04)*
+> - **Limpeza de deploy** — host passou a ser **Render**: removido `fly.toml`, `DEPLOY.md` reescrito para Render, comentários de `Dockerfile`/`README.md` atualizados.
+>
+> **Testes:** suíte ampliada para **21 passando** (4 novos para o backoff de lockout, função pura `loginLockDurationMs`). `tsc --noEmit` limpo · `npm run build` OK.
+>
+> **⚠️ Pendências EXTERNAS (fora do código — exigem ação no painel):**
+> 1. **[ALTO] Rotacionar segredos** — a senha do role Neon e o `ADMIN_PASSWORD` do `.env` devem ser considerados **comprometidos** (ficaram em claro no ambiente de dev/auditoria). Resetar no Neon (Roles → Reset password) e trocar a senha do admin.
+> 2. Migrar todos os segredos para **Environment Variables do Render** (nunca em arquivo) e definir `APP_URL` com a URL pública real.
+> 3. Configurar **Log Stream** no Render para receber os eventos de auditoria e criar alertas (ex.: muitos `auth.login.failure`).
+> 4. Validar pós-deploy: headers de segurança, redirect HTTPS, e que `/server.cjs` e `/.env` retornam 404.
+>
+> **Não reforçado por decisão de escopo:** rate limit de login por IP em memória (mantido como camada complementar ao lockout por conta); reforço adicional na borda (Cloudflare) fica a critério da operação.
+>
+> ---
+>
 > **Status das correções (2026-07-09):** aplicadas — C1, C2, C3, **A1–A9** (todos os altos), M1, M2, M3, M4, M5, M6, M7, M8, M10, M11, M12, B6, B8, além do script `npm test` e da suíte em `tests/` (17 testes passando, `tsc` limpo).
 >
 > **A8** (scrypt assíncrono), **M2** (tokens de sessão/reset agora armazenados como sha256 — o token bruto só vive no cookie/link; **atenção: sessões e links de reset existentes serão invalidados no deploy**, exigindo novo login), **M3** (transações em `deleteUser` e `createGeneratedPlan`), **M4** (`updateExercise` agora persiste `image_*`/`video_url`) e **M11** (invalidação de resets antigos + limpeza periódica a cada 6h) foram concluídos.
