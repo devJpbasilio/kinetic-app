@@ -5,6 +5,7 @@ import path from 'path';
 import { GoogleGenAI, Type } from '@google/genai';
 import nodemailer from 'nodemailer';
 import { db } from './src/db';
+import { audit } from './src/audit';
 import { generatePlan } from './src/generator/engine';
 import { CURATED_BY_SLUG } from './src/generator/exercises';
 import type { GeneratorPreferences, Nivel, Objetivo, Local, Equipamento, Regiao } from './src/generator/types';
@@ -26,8 +27,16 @@ if (process.env.GEMINI_API_KEY) {
 
 // ---------- Helpers de autenticação ----------
 const SESSION_COOKIE = 'kinetic_session';
-const SESSION_MAX_AGE_S = 30 * 24 * 60 * 60; // 30 dias
+// "Manter conectado" marcado → sessão longa (30d). Sem marcar → sessão curta (12h),
+// reduzindo a janela de sequestro caso o cookie vaze em máquina compartilhada.
+const SESSION_REMEMBER_MAX_AGE_S = 30 * 24 * 60 * 60; // 30 dias
+const SESSION_DEFAULT_MAX_AGE_S = 12 * 60 * 60;       // 12 horas
 const IS_PROD = process.env.NODE_ENV === 'production';
+
+// IP do cliente para auditoria/rate limit (respeita trust proxy em produção).
+function clientIp(req: Request): string {
+  return req.ip || 'unknown';
+}
 
 // Monta o cookie de sessão. Em produção (atrás de HTTPS) adiciona "Secure",
 // impedindo que o cookie trafegue em conexões não criptografadas.
@@ -359,7 +368,8 @@ async function startServer() {
       if (await db.getUserByEmail(email)) {
         return res.status(409).json({ error: 'Já existe uma conta com este e-mail.' });
       }
-      await db.createUser(email, password); // role 'user', status 'pending'
+      const created = await db.createUser(email, password); // role 'user', status 'pending'
+      audit('auth.register', { userId: created.id, email: created.email, ip: clientIp(req) });
       res.status(201).json({ status: 'pending', message: 'Cadastro enviado. Aguarde a aprovação de um administrador.' });
     } catch (e: any) {
       handleError(res, e);
@@ -369,29 +379,36 @@ async function startServer() {
   // Login por e-mail; barra contas ainda não aprovadas
   app.post('/api/auth/login', loginLimiter, async (req, res) => {
     try {
-      const { email, password } = req.body || {};
+      const { email, password, remember } = req.body || {};
       if (!isValidEmail(email) || !password || typeof password !== 'string') {
         return res.status(400).json({ error: 'Informe e-mail e senha.' });
       }
+      const ip = clientIp(req);
       // Bloqueio por conta (persistido no Postgres): trava tentativas repetidas
       // contra um mesmo e-mail, independentemente do IP e de reinícios do processo.
       const lock = await db.checkLoginLockout(email);
       if (lock.locked) {
+        audit('auth.login.locked', { email: email.toLowerCase().trim(), ip, retryAfterS: lock.retryAfterS });
         res.setHeader('Retry-After', String(lock.retryAfterS));
         return res.status(429).json({ error: `Muitas tentativas de login. Tente novamente em ${lock.retryAfterS}s.` });
       }
       const user = await db.verifyUserPassword(email, password);
       if (!user) {
         await db.registerLoginFailure(email); // conta a falha e escala o bloqueio
+        audit('auth.login.failure', { email: email.toLowerCase().trim(), ip });
         return res.status(401).json({ error: 'E-mail ou senha incorretos.' });
       }
       // Credenciais válidas → não é ataque: zera o contador (mesmo se ainda pendente).
       await db.clearLoginFailures(email);
       if (user.status !== 'approved') {
+        audit('auth.login.denied_pending', { userId: user.id, email: user.email, ip });
         return res.status(403).json({ error: 'Sua conta ainda não foi aprovada por um administrador.' });
       }
-      const session = await db.createSession(user.id);
-      res.setHeader('Set-Cookie', sessionCookie(session.token, SESSION_MAX_AGE_S));
+      // "Manter conectado" opcional: sessão longa só quando o usuário pede.
+      const maxAgeS = remember === true ? SESSION_REMEMBER_MAX_AGE_S : SESSION_DEFAULT_MAX_AGE_S;
+      const session = await db.createSession(user.id, maxAgeS * 1000);
+      res.setHeader('Set-Cookie', sessionCookie(session.token, maxAgeS));
+      audit('auth.login.success', { userId: user.id, email: user.email, ip, remember: remember === true });
       res.json({ user: await authPayload(user) });
     } catch (e: any) {
       handleError(res, e);
@@ -408,6 +425,7 @@ async function startServer() {
         if (user) {
           const token = await db.createPasswordReset(user.id);
           const link = `${APP_URL}/reset?token=${token}`;
+          audit('auth.password.reset_requested', { userId: user.id, email: user.email, ip: clientIp(req) });
           try { await sendResetEmail(user.email, link); }
           catch (e) { console.error('Falha ao enviar e-mail de redefinição:', e); }
         }
@@ -433,6 +451,7 @@ async function startServer() {
         return res.status(400).json({ error: 'Link inválido ou expirado. Solicite um novo.' });
       }
       await db.setUserPassword(userId, password); // também invalida sessões existentes
+      audit('auth.password.reset_completed', { userId, ip: clientIp(req) });
       res.json({ success: true, message: 'Senha redefinida. Faça login com a nova senha.' });
     } catch (e: any) {
       handleError(res, e);
@@ -441,7 +460,11 @@ async function startServer() {
 
   app.post('/api/auth/logout', async (req, res) => {
     const token = getSessionToken(req);
-    if (token) await db.deleteSession(token);
+    if (token) {
+      const u = await db.getSessionUser(token).catch(() => null);
+      await db.deleteSession(token);
+      if (u) audit('auth.logout', { userId: u.id, ip: clientIp(req) });
+    }
     res.setHeader('Set-Cookie', sessionCookie('', 0));
     res.json({ success: true });
   });
@@ -463,6 +486,7 @@ async function startServer() {
         return res.status(401).json({ error: 'Senha atual incorreta.' });
       }
       await db.setUserPassword(me.id, next);
+      audit('auth.password.changed', { userId: me.id, ip: clientIp(req) });
       res.json({ success: true, message: 'Senha alterada. Faça login novamente.' });
     } catch (e: any) {
       handleError(res, e);
@@ -480,6 +504,7 @@ async function startServer() {
   app.post('/api/admin/users/:id/approve', requireAdmin, async (req, res) => {
     const u = await db.setUserStatus(req.params.id, 'approved');
     if (!u) return res.status(404).json({ error: 'Usuário não encontrado.' });
+    audit('admin.user.approve', { adminId: uid(req), targetId: u.id, targetEmail: u.email, ip: clientIp(req) });
     res.json(u);
   });
 
@@ -488,6 +513,7 @@ async function startServer() {
     if (!target) return res.status(404).json({ error: 'Usuário não encontrado.' });
     if (target.role === 'admin') return res.status(400).json({ error: 'Não é possível rejeitar um administrador.' });
     await db.deleteUser(req.params.id);
+    audit('admin.user.reject', { adminId: uid(req), targetId: target.id, targetEmail: target.email, ip: clientIp(req) });
     res.json({ success: true });
   });
 
@@ -499,6 +525,7 @@ async function startServer() {
       return res.status(400).json({ error: 'Não é possível remover o último administrador.' });
     }
     await db.deleteUser(req.params.id);
+    audit('admin.user.delete', { adminId: uid(req), targetId: target.id, targetEmail: target.email, ip: clientIp(req) });
     res.json({ success: true });
   });
 

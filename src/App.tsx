@@ -14,6 +14,7 @@ export default function App() {
   // Auth states
   const [authStatus, setAuthStatus] = useState<'checking' | 'login' | 'ok'>('checking');
   const [passwordInput, setPasswordInput] = useState('');
+  const [rememberMe, setRememberMe] = useState(false);
   const [emailInput, setEmailInput] = useState('');
   const [authMode, setAuthMode] = useState<'login' | 'register' | 'forgot'>('login');
   const [registerNotice, setRegisterNotice] = useState<string | null>(null);
@@ -132,7 +133,7 @@ export default function App() {
       const res = await fetch('/api/auth/login', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ email: emailInput.trim(), password: passwordInput }),
+        body: JSON.stringify({ email: emailInput.trim(), password: passwordInput, remember: rememberMe }),
       });
       const data = await res.json();
       if (!res.ok) {
@@ -746,6 +747,18 @@ export default function App() {
                     className="w-full surface-inset focus:border-primary-container rounded-2xl py-3.5 pl-11 pr-4 text-white font-medium placeholder:text-on-surface-variant/50 focus:outline-none focus:ring-2 focus:ring-primary-container/30 transition-all"
                   />
                 </div>
+              )}
+
+              {authMode === 'login' && !isForgot && (
+                <label className="flex items-center gap-2.5 text-sm text-on-surface-variant/90 font-medium cursor-pointer select-none pt-1">
+                  <input
+                    type="checkbox"
+                    checked={rememberMe}
+                    onChange={(e) => setRememberMe(e.target.checked)}
+                    className="w-4 h-4 rounded accent-primary-container cursor-pointer"
+                  />
+                  Manter conectado
+                </label>
               )}
 
               {loginError && (

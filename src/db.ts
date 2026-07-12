@@ -459,13 +459,15 @@ export class Database {
   }
 
   // ---------------- Sessões ----------------
-  async createSession(userId: string): Promise<SessionRecord> {
+  // ttlMs opcional: permite sessão curta (sem "manter conectado") ou longa (30d).
+  // A expiração gravada no banco acompanha o Max-Age do cookie enviado ao cliente.
+  async createSession(userId: string, ttlMs: number = SESSION_TTL_MS): Promise<SessionRecord> {
     const rawToken = crypto.randomBytes(32).toString('hex');
     const session: SessionRecord = {
       token: rawToken, // devolvido ao cliente (cookie); NÃO é o que fica no banco
       user_id: userId,
       created_at: new Date().toISOString(),
-      expires_at: new Date(Date.now() + SESSION_TTL_MS).toISOString()
+      expires_at: new Date(Date.now() + ttlMs).toISOString()
     };
     await this.q(`INSERT INTO sessions (token, user_id, created_at, expires_at) VALUES ($1,$2,$3,$4)`,
       [this.hashToken(rawToken), session.user_id, session.created_at, session.expires_at]);
