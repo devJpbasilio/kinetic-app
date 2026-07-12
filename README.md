@@ -68,6 +68,6 @@ npm run lint    # checagem de tipos (tsc --noEmit)
 
 ## Deploy
 
-Veja `DEPLOY.md` (Postgres no Neon + host de sua preferência). Há um `Dockerfile`
-pronto (Node 22). O `fly.toml` incluso é um exemplo e ainda contém configuração de
-volume/SQLite legada — para Postgres externo, remova as seções `[mounts]`/`DB_PATH`.
+Veja `DEPLOY.md` (Postgres no Neon + **Render**). Há um `Dockerfile` pronto
+(Node 22). Todas as variáveis (`DATABASE_URL`, `ADMIN_*`, `APP_URL`, etc.) são
+definidas no painel do Render como Environment Variables — nunca no repositório.

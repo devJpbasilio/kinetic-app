@@ -11,6 +11,6 @@ RUN npm ci
 COPY . .
 RUN npm run build && npm prune --omit=dev
 
-# NODE_ENV, DATABASE_URL e demais variáveis vêm do painel do host (Koyeb)
+# NODE_ENV, DATABASE_URL e demais variáveis vêm do painel do host (Render)
 EXPOSE 3000
 CMD ["node", "dist/server.cjs"]
