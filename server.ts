@@ -373,8 +373,20 @@ async function startServer() {
       if (!isValidEmail(email) || !password || typeof password !== 'string') {
         return res.status(400).json({ error: 'Informe e-mail e senha.' });
       }
+      // Bloqueio por conta (persistido no Postgres): trava tentativas repetidas
+      // contra um mesmo e-mail, independentemente do IP e de reinícios do processo.
+      const lock = await db.checkLoginLockout(email);
+      if (lock.locked) {
+        res.setHeader('Retry-After', String(lock.retryAfterS));
+        return res.status(429).json({ error: `Muitas tentativas de login. Tente novamente em ${lock.retryAfterS}s.` });
+      }
       const user = await db.verifyUserPassword(email, password);
-      if (!user) return res.status(401).json({ error: 'E-mail ou senha incorretos.' });
+      if (!user) {
+        await db.registerLoginFailure(email); // conta a falha e escala o bloqueio
+        return res.status(401).json({ error: 'E-mail ou senha incorretos.' });
+      }
+      // Credenciais válidas → não é ataque: zera o contador (mesmo se ainda pendente).
+      await db.clearLoginFailures(email);
       if (user.status !== 'approved') {
         return res.status(403).json({ error: 'Sua conta ainda não foi aprovada por um administrador.' });
       }

@@ -12,6 +12,22 @@ export type { Exercise, Workout, WorkoutExercise, WorkoutLog };
 const SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000; // 30 dias
 const RESET_TTL_MS = 60 * 60 * 1000;             // 1 hora (link de redefinição)
 
+// --- Bloqueio de login por conta (anti brute-force / credential stuffing) ---
+// Persistido no Postgres para sobreviver a reinícios/cold start (Render Free) e
+// funcionar mesmo com múltiplas instâncias — o rate limiter em memória, por IP,
+// não faz nenhuma das duas coisas.
+const LOGIN_FAIL_THRESHOLD = 5;          // falhas consecutivas antes do 1º bloqueio
+const LOGIN_LOCK_BASE_MS = 30 * 1000;    // 30s no primeiro bloqueio
+const LOGIN_LOCK_MAX_MS = 30 * 60 * 1000; // teto de 30min por bloqueio
+
+// Duração do bloqueio em função do nº de falhas acumuladas (backoff exponencial).
+// Pura e determinística → testável sem banco. Ex.: 5→30s, 6→60s, 7→120s ... teto 30min.
+export function loginLockDurationMs(failCount: number): number {
+  if (failCount < LOGIN_FAIL_THRESHOLD) return 0;
+  const over = failCount - LOGIN_FAIL_THRESHOLD; // 0,1,2,...
+  return Math.min(LOGIN_LOCK_MAX_MS, LOGIN_LOCK_BASE_MS * 2 ** over);
+}
+
 // Conexão com o Postgres (Neon em produção). Defina DATABASE_URL no .env.
 const DATABASE_URL = process.env.DATABASE_URL || '';
 const USE_SSL = !!DATABASE_URL && !/localhost|127\.0\.0\.1/.test(DATABASE_URL);
@@ -157,12 +173,14 @@ export class Database {
     if (firstRun) await this.seedDemoData(adminId);
     await this.pruneSessions();
     await this.prunePasswordResets();
+    await this.pruneLoginAttempts();
 
     // Limpeza periódica (a cada 6h) — processos de longa duração não acumulam
-    // sessões/resets expirados. unref() não impede o processo de encerrar.
+    // sessões/resets/contadores expirados. unref() não impede o processo de encerrar.
     const cleanup = setInterval(() => {
       this.pruneSessions().catch(() => {});
       this.prunePasswordResets().catch(() => {});
+      this.pruneLoginAttempts().catch(() => {});
     }, 6 * 60 * 60 * 1000);
     cleanup.unref?.();
   }
@@ -238,6 +256,12 @@ export class Database {
         created_at TEXT NOT NULL,
         expires_at TEXT NOT NULL,
         used INTEGER NOT NULL DEFAULT 0
+      );
+      CREATE TABLE IF NOT EXISTS login_attempts (
+        email TEXT PRIMARY KEY,
+        fail_count INTEGER NOT NULL DEFAULT 0,
+        locked_until TEXT,
+        updated_at TEXT NOT NULL
       );
     `);
   }
@@ -494,6 +518,47 @@ export class Database {
 
   private async prunePasswordResets() {
     await this.q(`DELETE FROM password_resets WHERE expires_at <= $1 OR used = 1`, [new Date().toISOString()]);
+  }
+
+  // ---------------- Bloqueio de login por conta ----------------
+  // Verifica se a conta está bloqueada AGORA. Retorna os segundos restantes.
+  async checkLoginLockout(email: string): Promise<{ locked: boolean; retryAfterS: number }> {
+    const e = email.toLowerCase().trim();
+    const row = (await this.q(`SELECT locked_until FROM login_attempts WHERE email = $1`, [e])).rows[0] as { locked_until: string | null } | undefined;
+    if (!row?.locked_until) return { locked: false, retryAfterS: 0 };
+    const remainingMs = new Date(row.locked_until).getTime() - Date.now();
+    if (remainingMs > 0) return { locked: true, retryAfterS: Math.ceil(remainingMs / 1000) };
+    return { locked: false, retryAfterS: 0 };
+  }
+
+  // Registra uma falha de login e aplica bloqueio progressivo quando passa do limite.
+  async registerLoginFailure(email: string): Promise<void> {
+    const e = email.toLowerCase().trim();
+    const now = new Date();
+    const row = (await this.q(`SELECT fail_count FROM login_attempts WHERE email = $1`, [e])).rows[0] as { fail_count: number } | undefined;
+    const failCount = (row?.fail_count ?? 0) + 1;
+    const lockMs = loginLockDurationMs(failCount);
+    const lockedUntil = lockMs > 0 ? new Date(now.getTime() + lockMs).toISOString() : null;
+    await this.q(
+      `INSERT INTO login_attempts (email, fail_count, locked_until, updated_at) VALUES ($1,$2,$3,$4)
+       ON CONFLICT (email) DO UPDATE SET fail_count = EXCLUDED.fail_count, locked_until = EXCLUDED.locked_until, updated_at = EXCLUDED.updated_at`,
+      [e, failCount, lockedUntil, now.toISOString()]
+    );
+  }
+
+  // Zera o contador após um login bem-sucedido (credenciais válidas → não é ataque).
+  async clearLoginFailures(email: string): Promise<void> {
+    await this.q(`DELETE FROM login_attempts WHERE email = $1`, [email.toLowerCase().trim()]);
+  }
+
+  // Remove contadores obsoletos: sem bloqueio ativo e sem falhas há mais de 24h.
+  private async pruneLoginAttempts() {
+    const nowIso = new Date().toISOString();
+    const cutoff = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
+    await this.q(
+      `DELETE FROM login_attempts WHERE (locked_until IS NULL OR locked_until <= $1) AND updated_at <= $2`,
+      [nowIso, cutoff]
+    );
   }
 
   // ---------------- Exercises (por usuário) ----------------
