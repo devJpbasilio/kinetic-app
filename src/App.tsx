@@ -584,10 +584,17 @@ export default function App() {
     notes: string;
   }) => {
     try {
+      // Data LOCAL do dispositivo (AAAA-MM-DD). Sem isto, o servidor usaria a
+      // data UTC, que à noite (fuso do Brasil, UTC−3) já é o dia seguinte —
+      // fazendo o treino de hoje contar para amanhã.
+      const now = new Date();
+      const pad = (n: number) => String(n).padStart(2, '0');
+      const localDate = `${now.getFullYear()}-${pad(now.getMonth() + 1)}-${pad(now.getDate())}`;
+
       const res = await fetch('/api/logs', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(payload),
+        body: JSON.stringify({ ...payload, date: localDate }),
       });
 
       if (res.ok) {
@@ -1189,6 +1196,7 @@ export default function App() {
                       <DashboardView
                         user={user}
                         workouts={workouts}
+                        logs={logs}
                         onStartWorkout={(w) => {
                           setActiveWorkout(w);
                           triggerToast(`Iniciando treino "${w.name}"! Foco e bom treino!`);
