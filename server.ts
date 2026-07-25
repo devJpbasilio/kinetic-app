@@ -992,14 +992,17 @@ ${rawText}
       // Calorias (opcional): não-negativas; senão estima a partir da duração.
       let cal = Number(calories);
       if (!Number.isFinite(cal) || cal < 0) cal = Math.round(dur * 7.5);
-      // Data (opcional): formato YYYY-MM-DD e não-futura.
-      const today = new Date().toISOString().slice(0, 10);
-      let logDate = today;
+      // Data (opcional): o cliente envia sua data LOCAL (AAAA-MM-DD). A guarda de
+      // "não-futura" tolera fuso: a data local pode estar até 1 dia à frente do
+      // UTC (fusos a leste, até UTC+14), então o teto é o UTC de amanhã.
+      const nowMs = Date.now();
+      const maxDate = new Date(nowMs + 86_400_000).toISOString().slice(0, 10); // UTC de amanhã
+      let logDate = new Date(nowMs).toISOString().slice(0, 10); // fallback: UTC de hoje
       if (date !== undefined && date !== null && date !== '') {
         if (typeof date !== 'string' || !/^\d{4}-\d{2}-\d{2}$/.test(date) || isNaN(new Date(`${date}T00:00:00`).getTime())) {
           return res.status(400).json({ error: "Data inválida (use o formato AAAA-MM-DD)." });
         }
-        if (date > today) {
+        if (date > maxDate) {
           return res.status(400).json({ error: "A data do treino não pode ser no futuro." });
         }
         logDate = date;

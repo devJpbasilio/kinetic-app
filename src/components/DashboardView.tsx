@@ -1,21 +1,24 @@
 import React, { useState } from 'react';
-import { Workout, UserProfile } from '../types';
+import { Workout, UserProfile, WorkoutLog } from '../types';
 import { Play, Dumbbell, Flame, TrendingDown, Scale, Percent, Zap, ChevronRight, RefreshCw, Activity } from 'lucide-react';
 import { motion } from 'motion/react';
+import { getNextWorkout } from '../utils/nextWorkout';
 
 interface DashboardViewProps {
   user: UserProfile;
   workouts: Workout[];
+  logs: WorkoutLog[];
   onStartWorkout: (workout: Workout) => void;
   onNavigate: (tab: string) => void;
   onLogWeight: (weight: number) => void;
 }
 
-export default function DashboardView({ user, workouts, onStartWorkout, onNavigate, onLogWeight }: DashboardViewProps) {
+export default function DashboardView({ user, workouts, logs, onStartWorkout, onNavigate, onLogWeight }: DashboardViewProps) {
   const [weightInput, setWeightInput] = useState('');
   const [showWeightModal, setShowWeightModal] = useState(false);
 
-  const defaultWorkout = workouts[0] || null;
+  // Próximo treino da rotação: avança a partir do último treino registrado.
+  const nextWorkout = getNextWorkout(workouts, logs);
 
   const bmiLabel = (b: number) =>
     b < 18.5 ? 'Abaixo do peso' : b < 25 ? 'Peso normal' : b < 30 ? 'Sobrepeso'
@@ -50,9 +53,9 @@ export default function DashboardView({ user, workouts, onStartWorkout, onNaviga
       </section>
 
       {/* Main CTA Card */}
-      {defaultWorkout ? (
+      {nextWorkout ? (
         <section
-          onClick={() => onStartWorkout(defaultWorkout)}
+          onClick={() => onStartWorkout(nextWorkout)}
           className="relative group cursor-pointer active:scale-[0.99] transition-all duration-300 rounded-3xl overflow-hidden h-56 flex flex-col justify-end p-md"
           style={{
             background:
@@ -71,7 +74,7 @@ export default function DashboardView({ user, workouts, onStartWorkout, onNaviga
             <div className="flex items-center gap-xs">
               <span className="w-1.5 h-4 bg-primary-container rounded-full" />
               <span className="text-label-md text-primary-container tracking-widest uppercase font-bold">
-                {defaultWorkout.name}
+                {nextWorkout.name}
               </span>
             </div>
             <div className="flex justify-between items-end">
